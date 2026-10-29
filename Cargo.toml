@@ -1,0 +1,67 @@
+[package]
+name = "polygate"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Multi-provider coding agent gateway with account pooling, quota groups and OpenAI/Anthropic-compatible APIs"
+license = "MIT"
+repository = "https://github.com/OmaruKoma/polygate"
+keywords = ["llm", "gateway", "openai", "anthropic", "coding-agent"]
+categories = ["web-programming::http-server"]
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros", "http2"] }
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+dashmap = "6"
+futures-util = "0.3"
+hex = "0.4"
+hmac = "0.12"
+http = "1"
+mime_guess = "2"
+p256 = { version = "0.13", features = ["ecdsa"] }
+parking_lot = "0.12"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli", "deflate"] }
+rust-embed = { version = "8", features = ["include-exclude"] }
+secrecy = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "chrono", "json", "macros", "migrate"] }
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+toml = "0.8"
+tower = { version = "0.5", features = ["timeout", "limit", "buffer"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "limit", "request-id"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = { version = "1", features = ["derive"] }
+aes = "0.8"
+aes-gcm = "0.10"
+argon2 = "0.5"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+md-5 = "0.10"
+rsa = { version = "0.9", features = ["sha2"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+opt-level = 3

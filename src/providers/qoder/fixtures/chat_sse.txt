@@ -1,0 +1,14 @@
+data: {"statusCodeValue":200,"body":"{\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}"}
+
+data: {"statusCodeValue":200,"body":"{\"choices\":[{\"delta\":{\"content\":\"Hello \",\"reasoning_content\":\"think \"}}]}"}
+
+data: {"statusCodeValue":200,"body":"null"}
+
+data: {"statusCodeValue":200,"body":"{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\"}}]}}]}"}
+
+data: {"statusCodeValue":200,"body":"{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Beijing\\\"}\"}}]}}]}"}
+
+data: {"statusCodeValue":200,"body":"{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}"}
+
+data: {"statusCodeValue":200,"body":"[DONE]"}
+

@@ -1,0 +1,151 @@
+# PolyGate example configuration.
+# Copy to data/config.toml (or set POLYGATE_CONFIG) and edit.
+# Real provider credentials are never stored here; they go to the encrypted
+# credential store via the admin API.
+
+[server]
+# Loopback by default. Exposing the gateway publicly must be deliberate and
+# belongs behind a TLS-terminating reverse proxy.
+listen = "127.0.0.1:8787"
+# Absolute public URL (e.g. "https://polygate.example.com") when serving behind
+# a TLS reverse proxy. Used for admin Origin checks and Secure cookies.
+# public_url = "https://polygate.example.com"
+trust_proxy = false
+request_timeout_secs = 600
+max_body_bytes = 16777216
+cors_origins = []
+
+[database]
+url = "sqlite://data/polygate.db?mode=rwc"
+# SQLite allows one writer at a time; 4 is enough for a low-memory VPS.
+# The storage layer caps this at 8 regardless of the configured value.
+max_connections = 4
+usage_flush_secs = 5
+
+[auth]
+# A gateway API key is required to start serving. Prefer POLYGATE_API_KEY over
+# writing secrets here. Keys must be at least 16 characters and must not be
+# example placeholders such as "change-me".
+# api_keys = ["pg-..."]
+# bootstrap_api_key = "pg-..."
+# admin_token = "adm-..."
+admin_session_ttl_hours = 24
+
+# ---------------------------------------------------------------------------
+# Web admin panel. The first visit performs setup (password, then a one-time
+# recovery code); there is no default password. Account credentials are added
+# through the panel and stored encrypted; the browser never receives them.
+# ---------------------------------------------------------------------------
+[admin]
+enabled = true
+# Authorization callback. Must be reachable by the browser and allowed by the
+# CodeArts portal. Defaults to http://127.0.0.1:<listen-port>/oauth/callback.
+# redirect_url = "https://polygate.example.com/oauth/callback"
+# First-run setup is only accepted from a loopback peer AND a loopback Host.
+# Keep true unless you know exactly why you need otherwise.
+setup_local_only = true
+# Force the admin cookie to Secure; when unset it follows the request scheme.
+# secure_cookie = true
+# Extra exact origins allowed for mutating admin requests.
+allowed_origins = []
+flow_ttl_secs = 600
+login_max_failures = 5
+login_window_secs = 300
+# CodeArts browser authorization defaults, mirroring the official client.
+codearts_client_id = "codearts-snap"
+codearts_uri_scheme = "codearts-snap"
+codearts_theme = "2"
+codearts_plugin_name = "codearts-snap_vscode"
+codearts_plugin_version = "26.7.2"
+codearts_locale = "zh-cn"
+codearts_cn_portal_url = "https://codearts.huaweicloud.com"
+codearts_intl_portal_url = "https://codearts.ap-southeast-1.huaweicloud.com"
+codearts_sts_url = "https://sts.cn-north-4.myhuaweicloud.com"
+
+[logging]
+# tracing filter directive: trace / debug / info / warn / error,
+# or something like "info,polygate=debug". Override with POLYGATE_LOG_LEVEL.
+level = "info"
+
+[scheduler]
+strategy = "smooth_weighted_round_robin"
+session_ttl_secs = 86400
+queue_timeout_secs = 30
+provider_max_concurrency = 64
+cooldown_base_secs = 30
+cooldown_max_secs = 600
+failure_threshold = 3
+quota_min_ratio = 0.0
+session_cache_capacity = 10000
+
+[metrics]
+enabled = true
+request_logs = false
+
+# Real providers are added in later stages. Until then only the mock provider
+# exists, and it is never reported as verified. The zero-config default mock can
+# be disabled with POLYGATE_MOCK_ENABLED=false.
+[[providers]]
+kind = "mock"
+region = "cn"
+enabled = true
+name = "Mock (development)"
+
+  # Development-only mock behaviour:
+  # "mock.reply" = "fixed reply text"        (default: echoes the last user turn)
+  # "mock.tool_calls" = '[{"id":"call-1","name":"read_file","arguments":{"path":"a.txt"}}]'
+
+  [[providers.models]]
+  id = "mock-chat"
+  display_name = "Mock Chat"
+  context_window = 128000
+  max_output = 8192
+  aliases = ["gpt-4o-mini"]
+# ---------------------------------------------------------------------------
+# CodeArts (M13-B, experimental: implemented against protocol research, not yet
+# verified with a real account). Accounts are imported before startup for now.
+# ---------------------------------------------------------------------------
+# [[providers]]
+# kind = "codearts"
+# region = "cn"                       # or "intl"
+# enabled = true
+# base_url = "https://snap-access.cn-north-4.myhuaweicloud.com"
+# verification = "experimental"
+#
+#   [providers.options]
+#   # Both commercial profiles use the CN STS endpoint.
+#   sts_url = "https://sts.cn-north-4.myhuaweicloud.com"
+#   # Optional client identity overrides (defaults shown):
+#   # language = "zh-cn"
+#   # client_version = "26.7.2"
+#   # app_id = "CodeAgent3.0"
+#
+# Account credential JSON (AK/SK + STS token; refresh fields optional):
+# {
+#   "access_key_id": "...",
+#   "secret_access_key": "...",
+#   "security_token": "...",
+#   "domain_id": "...",
+#   "expiration": "2026-10-30T12:00:00Z",
+#   "refresh_token": "...",
+#   "code_verifier": "...",
+#   "dpop_private_jwk": {"kty":"EC","crv":"P-256","x":"...","y":"...","d":"..."}
+# }
+
+# ---------------------------------------------------------------------------
+# Client identity (`client.identity`) — Web UI, Qoder, TRAE, WorkBuddy
+# ---------------------------------------------------------------------------
+# Every adapter above defaults to `honest`: protocol-required headers plus the
+# gateway's own `polygate/<version>` User-Agent. Set `impersonate` to also send
+# the official desktop client's header family (conversation ids, IDE/agent
+# constants, SDK fingerprints and the client UA). The Intl WorkBuddy gateway
+# rejects a request with no conversation id (business code 11128), so it needs
+# `impersonate`; the other three work either way and the switch is there for
+# comparison and for upstreams that start checking the headers.
+#
+#   [providers.options]
+#   "client.identity" = "impersonate"   # default: "honest"
+#
+# Values are per provider. Impersonation replays public client constants and
+# derives the same per-uid device values the upstream derives; it still does not
+# forge a device fingerprint (see AGENTS.md §2).

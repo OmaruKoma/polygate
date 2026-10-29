@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>PolyGate 管理面板</title>
+  <link rel="stylesheet" href="/admin/static/app.css">
+</head>
+<body>
+  <div id="boot" class="boot">正在加载…</div>
+
+  <section id="auth-screen" class="auth-screen hidden">
+    <div class="auth-card">
+      <div class="brand-mark">PG</div>
+      <h1>PolyGate</h1>
+      <p class="muted">多 Provider Coding Agent 网关</p>
+      <form id="setup-form" class="hidden">
+        <h2>首次初始化</h2>
+        <p class="muted">设置管理员密码。密码至少 12 位，仅保存在本机数据库（Argon2id）。</p>
+        <label>管理员密码<input type="password" id="setup-password" autocomplete="new-password" required minlength="12"></label>
+        <label>确认密码<input type="password" id="setup-confirm" autocomplete="new-password" required minlength="12"></label>
+        <button class="btn primary" type="submit">创建管理员</button>
+        <p class="hint">初始化仅允许本机访问。初始化成功后会显示一次性恢复码，请离线保存。</p>
+      </form>
+      <form id="login-form" class="hidden">
+        <h2>管理员登录</h2>
+        <label>用户名<input type="text" id="login-username" value="admin" autocomplete="username"></label>
+        <label>密码<input type="password" id="login-password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit">登录</button>
+        <button class="btn ghost" type="button" id="show-recover">使用恢复码</button>
+      </form>
+      <form id="recover-form" class="hidden">
+        <h2>恢复管理员访问</h2>
+        <label>恢复码<input type="password" id="recover-code" autocomplete="one-time-code" required></label>
+        <label>新密码<input type="password" id="recover-password" autocomplete="new-password" required minlength="12"></label>
+        <button class="btn primary" type="submit">重置密码</button>
+        <button class="btn ghost" type="button" id="back-login">返回登录</button>
+      </form>
+      <p id="auth-error" class="error-text" role="alert"></p>
+    </div>
+  </section>
+
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark small">PG</div>
+        <div><strong>PolyGate</strong><span class="muted">控制台</span></div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item" data-view="dashboard"><span>▦</span>仪表盘</button>
+        <div class="nav-group">
+          <button class="nav-item" data-view="accounts"><span>◉</span>账号管理</button>
+          <div class="subnav">
+            <button class="subnav-item" data-provider="codearts">CodeArts</button>
+            <button class="subnav-item" data-provider="qoder">Qoder</button>
+            <button class="subnav-item" data-provider="trae">TRAE</button>
+            <button class="subnav-item" data-provider="workbuddy">WorkBuddy</button>
+          </div>
+        </div>
+        <button class="nav-item" data-view="models"><span>◇</span>模型管理</button>
+        <button class="nav-item" data-view="checkins"><span>✓</span>签到管理</button>
+        <button class="nav-item" data-view="usage"><span>∿</span>用量统计</button>
+        <button class="nav-item" data-view="logs"><span>≡</span>请求日志</button>
+        <button class="nav-item" data-view="settings"><span>⚙</span>系统设置</button>
+      </nav>
+      <div class="sidebar-foot">
+        <button class="btn ghost small" id="theme-toggle">切换主题</button>
+        <span class="muted" id="version-label"></span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">仪表盘</h1>
+          <p id="page-subtitle" class="muted">账号、额度与运行状态</p>
+        </div>
+        <div class="topbar-actions">
+          <span id="admin-user" class="pill">admin</span>
+          <button class="btn ghost small" id="logout">退出登录</button>
+        </div>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/admin/static/app.js"></script>
+</body>
+</html>

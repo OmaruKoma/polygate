@@ -1,0 +1,36 @@
+[Unit]
+Description=PolyGate multi-provider coding agent gateway
+Documentation=https://github.com/OWNER/polygate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=polygate
+Group=polygate
+WorkingDirectory=/opt/polygate
+# Secrets (gateway API key, master key) belong in this file, mode 0600.
+EnvironmentFile=-/etc/polygate/polygate.env
+ExecStart=/opt/polygate/polygate --config /etc/polygate/config.toml --data-dir /var/lib/polygate serve
+Restart=on-failure
+RestartSec=3
+
+# Hardening. The service only needs its data directory and network sockets.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/polygate
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

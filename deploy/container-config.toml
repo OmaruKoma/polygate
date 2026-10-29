@@ -1,0 +1,23 @@
+# Container configuration. Secrets come from environment variables:
+#   POLYGATE_API_KEY   gateway API key(s)
+#   POLYGATE_MASTER_KEY  32-byte hex/base64 key for credential encryption
+[server]
+listen = "0.0.0.0:8787"
+trust_proxy = false
+max_body_bytes = 16777216
+
+[database]
+url = "sqlite:///var/lib/polygate/polygate.db?mode=rwc"
+max_connections = 4
+
+[logging]
+level = "info"
+
+[admin]
+enabled = true
+setup_local_only = true
+
+[[providers]]
+kind = "mock"
+region = "cn"
+enabled = false

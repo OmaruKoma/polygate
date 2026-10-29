@@ -1,0 +1,17 @@
+{
+  "end_date": "2026-11-02",
+  "metrics": [
+    {
+      "name": "usageTotalPackageCredit",
+      "package_credit_amount": 30000,
+      "package_credit_used": 12000,
+      "package_credit_remain": 18000
+    },
+    {
+      "name": "usageBasicPackageCredit",
+      "package_credit_amount": 20000,
+      "package_credit_used": 5000,
+      "package_credit_expiring_amount": 1000
+    }
+  ]
+}
