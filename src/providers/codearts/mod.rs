@@ -331,10 +331,10 @@ impl CodeArtsProvider {
     ) -> Result<AuthStatus, GatewayError> {
         let fresh = match self.ensure_fresh(context, credential).await {
             Ok(fresh) => fresh,
-            // Nothing to refresh with: report expiry instead of hiding it behind
-            // a transport-style error.
-            Err(error) if error.kind == ErrorKind::AuthExpired => return Ok(AuthStatus::Expired),
-            Err(error) => return Err(error),
+            // A rejected refresh is an account-state answer, not a gateway
+            // failure: the operator has to re-authorize. Transport errors stay
+            // errors so the UI can report an upstream problem instead.
+            Err(error) => return refresh_failure(error),
         };
         match self.probe_status(&fresh).await? {
             // The upstream rejected a token whose recorded expiry is still in
@@ -343,8 +343,7 @@ impl CodeArtsProvider {
             // out of the catalogue until the operator re-authorizes.
             AuthStatus::RefreshRequired => match self.rotate(context, credential, true).await {
                 Ok(rotated) => self.probe_status(&rotated).await,
-                Err(error) if error.kind == ErrorKind::AuthExpired => Ok(AuthStatus::Expired),
-                Err(error) => Err(error),
+                Err(error) => refresh_failure(error),
             },
             status => Ok(status),
         }
@@ -548,5 +547,26 @@ impl Provider for CodeArtsProvider {
         request: ChatRequest,
     ) -> Result<ChatStream, GatewayError> {
         self.chat_stream_for(context, credential, request).await
+    }
+}
+
+/// Map a failed refresh onto an account status.
+///
+/// Credential problems are an account-state answer — the operator has to
+/// re-authorize — so they must not surface as a gateway error. Everything else
+/// (transport, timeout, unexpected 5xx) stays an error: pretending a network
+/// failure is "expired" would send the operator through authorization for
+/// nothing.
+fn refresh_failure(error: GatewayError) -> Result<AuthStatus, GatewayError> {
+    tracing::warn!(
+        kind = ?error.kind,
+        detail = %error.message,
+        "CodeArts credential refresh failed"
+    );
+    match error.kind {
+        ErrorKind::AuthExpired => Ok(AuthStatus::Expired),
+        ErrorKind::AuthInvalid | ErrorKind::AccountDisabled => Ok(AuthStatus::Invalid),
+        ErrorKind::ChannelRestricted => Ok(AuthStatus::Restricted),
+        _ => Err(error),
     }
 }

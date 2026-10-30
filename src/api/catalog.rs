@@ -125,7 +125,16 @@ impl ModelCatalog {
             };
             match provider.list_models(&credential).await {
                 Ok(models) => Self::push_models(&mut entries, key, models),
-                Err(err) => err.log("model_discovery"),
+                Err(err) => {
+                    // Name the provider and the reason: a silently missing
+                    // provider is the hardest kind of catalogue gap to explain.
+                    tracing::warn!(
+                        provider = %info.id,
+                        kind = ?err.kind,
+                        detail = %err.message,
+                        "model discovery failed"
+                    );
+                }
             }
         }
         let mut catalog = Self::finish(entries);
