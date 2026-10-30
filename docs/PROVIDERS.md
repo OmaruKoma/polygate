@@ -123,7 +123,7 @@
 | Qoder Intl | 计划 | 计划 | 计划 | 计划 | 已实现（未实测） | Unsupported | unavailable（授权与签到未实测） |
 | TRAE CN | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-E，MockVerified） | Unsupported | experimental（授权/刷新/额度/签到均 MockVerified；无真实账号） |
 | TRAE Intl | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（订阅计划，数值 Unknown；M14-E） | Unsupported | unavailable（无真实账号；OAuth 主机未验证，登录/签到 Unsupported） |
-| WorkBuddy CN | 已实现（M14-B；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-C，MockVerified） | Unsupported（growth/checkin 不是 Agent Task API） | experimental（MockVerified；CN 签到按参考实现，claim 需开关） |
+| WorkBuddy CN | 已实现（M14-B；模型发现 + Chat/SSE Live Verified 2026-10-30） | 已实现（真实账号发现 15 个模型） | 已实现（Chat 非流式与 SSE 均已实测；工具调用 MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-C，MockVerified，未点刷新实测） | Unsupported（growth/checkin 不是 Agent Task API） | experimental（授权/模型/Chat 已 Live Verified；额度刷新与签到待管理台点击确认） |
 | WorkBuddy Intl | 已实现（MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（credits；M14-C，MockVerified） | Unsupported | unavailable（首条 system/会话头未适配；签到 Unsupported） |
 | CodeBuddy CN | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 | CodeBuddy Intl | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
@@ -382,6 +382,12 @@ Coding2API 的适配行为：
 > ZCode 已明确排除（2026-10-29），不再评估、不实现。
 >
 > M14-B/M14-C（2026-10-29）：WorkBuddy 适配器核心、刷新、设备码、额度与 CN 签到已实现并通过 Mock 测试（MockVerified）；Intl 签到 Unsupported。
+>
+> 2026-10-30 实测（WorkBuddy CN，真实账号经管理台授权）：provider 需在配置里显式启用
+> `kind = "workbuddy" region = "cn"`，否则管理台会创建出“未注册 Provider”的账号，
+> 额度/签到按钮返回 `provider is not registered`。启用后启动时发现 15 个模型，
+> `POST /v1/chat/completions`（`workbuddy-cn::<model>`）非流式与 SSE 均返回 200 并带正确 content。
+> 额度刷新与签到未由自动化触发，仍按 MockVerified 记录。
 > 表格中“源码”表示参考实现的协议依据，“已实现”表示 PolyGate 的 Rust 适配器；
 > 两者都不等于真实上游可用。诚实头能否通过上游校验仍未验证，见
 > `docs/WORKBUDDY_MIGRATION.md` §14 与 `PROGRESS.md` §36.5。

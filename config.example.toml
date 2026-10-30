@@ -154,6 +154,18 @@ name = "Mock (development)"
 #
 # [[providers]]
 # kind = "workbuddy"
+# region = "cn"                       # CN and Intl are separate upstreams and
+#                                     # separate account pools; configure both
+#                                     # to use both
+# enabled = true
+#
+#   [providers.options]
+#   "client.identity" = "impersonate" # the CN gateway also routes a caller
+#                                     # without the gate headers as a non-client
+#   "checkin.claim_enabled" = "true"  # default false: status only, no claims
+#
+# [[providers]]
+# kind = "workbuddy"
 # region = "intl"
 # enabled = true
 #

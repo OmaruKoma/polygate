@@ -4577,3 +4577,83 @@ aarch64 二进制已替换路由器 `/usr/bin/polygate` 并 `restart`，`/health
 Qoder Intl 的 `selectAccounts` 循环本身仍未解决：网关侧的设备码轮询（202/404 = 等待）与
 超时处理都正常，卡点在浏览器页面。需要操作者在选中账号后观察页面是否回到
 `/device/selectAccounts`，以及是否出现授权码/错误提示，才能判断是上游限制还是需要额外参数。
+
+## 52. WorkBuddy CN 未注册：补齐 provider 配置并实测 Chat（2026-10-30，完成）
+
+### 52.1 现象
+
+管理台里 WorkBuddy CN 账号 `744f9313-47dc-4da1-900e-08054ecb91f3`
+（外部身份 `workbuddy:cn:744f9313-…`，认证状态有效）面板显示：
+
+```text
+额度：未知
+检查认证 → provider is not registered
+刷新额度 → provider is not registered
+执行签到 → provider does not support check-in
+```
+
+### 52.2 原因
+
+`ProviderRegistry` 以 `(kind, region)` 为键，且**只包含配置里启用的条目**。路由器
+`/etc/polygate/config.toml` 当时只有 `workbuddy`/`intl` 与 `codearts`/`cn`、`qoder`/`cn`、
+`mock`/`cn`，没有 `workbuddy`/`cn`，因此：
+
+- `state.registry.get(&ProviderKey::new(Workbuddy, Cn))` 为 `None` → 认证检查与额度刷新
+  走 `src/admin/api/mod.rs:789` / `:850` 的 `provider is not registered`。
+- 签到执行器的 `RoutingCheckinExecutor::for_request` 在 `(kind, region)` 精确匹配失败后
+  回落到同 kind 的任意注册项（`src/checkin/executor.rs:89`），于是拿到 Intl 执行器，
+  `checkin()` 因 `region == Intl` 返回 `Unsupported`，最终记为
+  `provider does not support check-in`（`src/checkin/model.rs:214`）。
+
+换句话说三处报错是同一个根因：**账号本身有效，但该 Provider 没在配置里启用**。
+管理台允许为未启用的 kind/region 发起授权并落库账号，这一点仍是有意保留的行为
+（先拿到凭据再改配置），代价是面板会在之后才暴露“未注册”。
+
+### 52.3 修改（仅配置，无代码改动）
+
+在 `/etc/polygate/config.toml` 中 WorkBuddy Intl 之前新增：
+
+```toml
+[[providers]]
+kind = "workbuddy"
+region = "cn"
+enabled = true
+name = "WorkBuddy CN"
+verification = "experimental"
+
+  [providers.options]
+  "client.identity" = "impersonate"
+  "checkin.claim_enabled" = "true"
+```
+
+- `client.identity = "impersonate"`：`src/providers/profile.rs:122` 记录两个网关都会把
+  缺少 gate headers 的调用方当作非客户端；Intl 直接答业务码 `11128`。CN 是否也强制未实测，
+  保持与 Intl 一致更稳。
+- `checkin.claim_enabled = "true"`：与 Qoder CN 一致，签到按钮才会真正领取（默认 false 只查状态）。
+
+`config.example.toml` 同步补了 CN 示例（此前只有 Intl）。
+
+### 52.4 验证（路由器真机）
+
+```text
+$ polygate doctor --config /etc/polygate/config.toml --data-dir /etc/polygate
+[ok] config: loaded 5 provider entries, listen 10.0.0.1:8787
+[ok] providers: mock-cn:mock, codearts-cn:codearts, qoder-cn:qoder,
+                workbuddy-cn:workbuddy, workbuddy-intl:workbuddy
+
+$ /etc/init.d/polygate restart      → running，gateway listening address=10.0.0.1:8787
+$ GET /v1/models                    → 37 条，其中 owned_by=workbuddy-cn 15 条
+$ POST /v1/chat/completions  model=workbuddy-cn::space-bunny  stream=false
+  → 200，content="pong"，usage 163/3/166
+$ POST /v1/chat/completions  model=workbuddy-cn::space-bunny  stream=true
+  → 200，SSE 分块 delta 正常，finish_reason=stop
+```
+
+配置备份：`config.toml.bak5-20261030`。
+
+### 52.5 状态与未验证
+
+- WorkBuddy CN：授权、模型发现、非流式 Chat、SSE 均为 **LiveVerified**（2026-10-30）；
+  工具调用、额度数值、签到最后结果仍为 MockVerified / 未触发。
+- 额度与签到需在管理台点一次「刷新额度」「执行签到」后，从账号详情与 `checkin_runs` 确认。
+- WorkBuddy Intl 仍无真实登录，维持 unavailable。
