@@ -138,6 +138,39 @@ name = "Mock (development)"
 # }
 
 # ---------------------------------------------------------------------------
+# Other providers (same shape as CodeArts above).
+#
+# `options` is a string map: keys containing a dot MUST be quoted, otherwise
+# TOML parses them as nested tables and startup fails with
+# "invalid type: map, expected a string".
+# ---------------------------------------------------------------------------
+# [[providers]]
+# kind = "qoder"
+# region = "cn"                       # or "intl"
+# enabled = true
+#
+#   [providers.options]
+#   "checkin.claim_enabled" = "true"  # default false: status only, no claims
+#
+# [[providers]]
+# kind = "workbuddy"
+# region = "intl"
+# enabled = true
+#
+#   [providers.options]
+#   "client.identity" = "impersonate" # Intl rejects requests without the
+#                                     # official header family
+#   "checkin.claim_enabled" = "false" # Intl has no check-in
+#
+# [[providers]]
+# kind = "trae"
+# region = "cn"
+# enabled = true
+#
+#   [providers.options]
+#   "checkin.claim_enabled" = "false" # requires the 16-digit device id
+
+# ---------------------------------------------------------------------------
 # Client identity (`client.identity`) — Web UI, Qoder, TRAE, WorkBuddy
 # ---------------------------------------------------------------------------
 # Every adapter above defaults to `honest`: protocol-required headers plus the

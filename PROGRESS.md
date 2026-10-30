@@ -4475,3 +4475,52 @@ $ cargo test --workspace                                  651 passed
 
 真实 WorkBuddy Intl 登录未完成（需操作者在官方页面授权）。若仍失败，错误里会带
 `fields: ...` 暴露上游返回的字段名，据此再对齐结构。
+
+## 50. Qoder 签到：claim 开关与 TOML 点号键（2026-10-30）
+
+### 50.1 现象
+
+Qoder CN 账号 `edufx` 签到结果为“失败”，错误：
+
+```text
+Qoder reward claim is disabled; set the provider option `checkin.claim_enabled = true` to allow claims
+```
+
+### 50.2 原因
+
+签到状态查询是只读的，会正常执行；**领取权益**默认关闭（AGENTS.md §2：奖励领取默认不实现，
+除非上游明确允许自动化）。`QoderCheckinExecutor` 在存在可领取活动且未开启开关时返回
+definitive failure 并点名该设置，所以整次运行被记为失败。
+
+### 50.3 启用方式（已应用到路由器）
+
+```toml
+[[providers]]
+kind = "qoder"
+region = "cn"
+enabled = true
+
+  [providers.options]
+  "checkin.claim_enabled" = "true"
+```
+
+**关键细节**：`options` 是 `HashMap<String, String>`，键里带点时**必须加引号**。
+写成 `checkin.claim_enabled = "true"` 会被 TOML 解析成嵌套表 `options.checkin.claim_enabled`，
+启动直接报 `invalid type: map, expected a string`（本次实际踩到，已修复并在
+`config.example.toml` 中注明）。
+
+### 50.4 验证
+
+```text
+$ /etc/init.d/polygate restart
+INFO gateway listening address=10.0.0.1:8787
+$ curl /health → {"status":"ok"}
+$ curl /v1/models → 22
+```
+
+路由器配置备份：`config.toml.bak4-20261030`。
+
+### 50.5 未验证
+
+开启开关后的真实 claim 结果未由我触发（需要管理台会话）；操作者点一次「签到」后即可从
+`checkin_runs` 与账号详情确认。
