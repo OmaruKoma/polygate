@@ -238,13 +238,12 @@ fn retry_on_another_host(error: &GatewayError) -> bool {
     matches!(error.kind, ErrorKind::Transport | ErrorKind::Timeout)
 }
 
-/// Model list mapping. The upstream answers `{"chat":[{...}]}`; an absent or
-/// empty catalogue is a discovery failure, not "this account has no models".
+/// Model list mapping. The upstream answers with one array per scene: the
+/// desktop client reads `app`, the captured protocol carried `chat`. An absent
+/// or empty catalogue is a discovery failure, not "this account has no models".
 pub fn parse_models(payload: &Value) -> Result<Vec<UpstreamModel>, GatewayError> {
-    let items = payload
-        .get("chat")
-        .and_then(Value::as_array)
-        .ok_or_else(|| GatewayError::upstream_server("Qoder model list has no `chat` array"))?;
+    let items = scene_items(payload)
+        .ok_or_else(|| GatewayError::upstream_server("Qoder model list has no model array"))?;
     let mut models = Vec::new();
     for item in items {
         let Some(key) = item
@@ -267,7 +266,11 @@ pub fn parse_models(payload: &Value) -> Result<Vec<UpstreamModel>, GatewayError>
         {
             model = model.with_display_name(name);
         }
-        model.context_window = item.get("max_input_tokens").and_then(Value::as_u64);
+        model.context_window = item
+            .get("max_input_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| item.get("default_context_window").and_then(Value::as_u64));
+        model.max_output = item.get("max_output_tokens").and_then(Value::as_u64);
         models.push(model);
     }
     if models.is_empty() {
@@ -276,4 +279,17 @@ pub fn parse_models(payload: &Value) -> Result<Vec<UpstreamModel>, GatewayError>
         ));
     }
     Ok(models)
+}
+
+/// Upstream `is_vl` is a coarse catalogue flag, not a capability fact: on
+/// 2026-10-30 `dmodel` answered "Unknown" with an image attached while
+/// `kmodel` read the same image correctly. Vision stays on the live-verified
+/// allowlist in [`crate::model_service::verified_vision`].
+fn scene_items(payload: &Value) -> Option<&[Value]> {
+    ["chat", "app"].iter().find_map(|scene| {
+        payload
+            .get(*scene)
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+    })
 }

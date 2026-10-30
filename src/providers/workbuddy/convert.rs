@@ -23,6 +23,7 @@ use crate::protocol::{
     ChatMessage, ChatRequest, ChatResponse, ContentBlock, FinishReason, MessageRole, StreamEvent,
     ToolCall, ToolChoice, Usage,
 };
+use crate::providers::{is_image_media, openai_content};
 
 pub fn build_body(request: &ChatRequest) -> Result<Value, GatewayError> {
     let mut body = Map::new();
@@ -60,13 +61,6 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
     let mut previous_assistant = false;
 
     for message in messages {
-        for block in &message.content {
-            if let ContentBlock::Unsupported { media_type, .. } = block {
-                return Err(GatewayError::bad_request(format!(
-                    "WorkBuddy adapter cannot forward `{media_type}` content blocks"
-                )));
-            }
-        }
         let text: String = message
             .content
             .iter()
@@ -90,6 +84,17 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
                         "a `tool` message cannot also carry text or tool calls",
                     ));
                 }
+                if message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        ContentBlock::Unsupported { media_type, .. } if is_image_media(media_type)
+                    )
+                }) {
+                    return Err(GatewayError::new(
+                        crate::error::ErrorKind::Unsupported,
+                        "a `tool` message cannot carry image content",
+                    ));
+                }
                 for result in tool_results {
                     if !declared.contains(&result.tool_call_id) {
                         return Err(GatewayError::bad_request(format!(
@@ -109,6 +114,17 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
                 if !tool_results.is_empty() {
                     return Err(GatewayError::bad_request(
                         "an `assistant` message cannot carry a tool result",
+                    ));
+                }
+                if message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        ContentBlock::Unsupported { media_type, .. } if is_image_media(media_type)
+                    )
+                }) {
+                    return Err(GatewayError::new(
+                        crate::error::ErrorKind::Unsupported,
+                        "an assistant message cannot carry image content",
                     ));
                 }
                 let mut object = Map::new();
@@ -151,12 +167,13 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
                 }
                 declared.clear();
                 previous_assistant = false;
+                let content = openai_content("WorkBuddy", &message.content)?;
                 let mut object = Map::new();
                 object.insert("role".into(), json!(role_name(role)));
                 if let Some(name) = &message.name {
                     object.insert("name".into(), json!(name));
                 }
-                object.insert("content".into(), json!(text));
+                object.insert("content".into(), content);
                 out.push(Value::Object(object));
             }
         }

@@ -23,8 +23,10 @@
 - **签到门控**：`/v1/ops/claim` + `/v1/ops/confirm` 属权益领取，默认不实现；仅在上游明确允许自动化并经运维确认后才作为默认关闭的可选项。
 - **区域**：CN（`cn-north-4`）；国际站（`ap-southeast-1`）存在，但未验证，默认 `unavailable`。
 - **基址**：`https://snap-access.cn-north-4.myhuaweicloud.com`
-- **认证**：STS 临时 AK/SK + `security_token` + `refresh_token` + `client_id` + P-256 DPoP 私钥 + `domain_id`/`uid`。签名 `SDK-HMAC-SHA256`，头 `X-Security-Token`。refresh_token 一次性，刷新后必须原子替换。
-- **模型发现**：`GET /v1/model/builtin`，头 `Agent-Type: PromptCenter`；另有 agent 列表接口（未验证）。
+- **认证**：STS 临时 AK/SK + `security_token` + `refresh_token` + `client_id` + P-256 DPoP 私钥 + `domain_id`/`uid`。签名 `SDK-HMAC-SHA256`，头 `X-Security-Token`。refresh_token 一次性，刷新后必须原子替换。**刷新必须复用签发 refresh token 的 `client_id`**（登录默认 `codearts-snap`；用错 client 会得到终态 `invalid_grant`，表现为 STS 到期即掉线）。
+- **模型发现**：`GET /v1/model/builtin`（`Agent-Type: PromptCenter`）给模型清单；长度/输出上限从
+  `GET /v1/agent-center/agents/useragents` + `GET /v1/agent-center/agents/detail?agent_id=…`
+  （`Agent-Type: AgentCenter`）的 `model_parameters` 合并，最多探测 6 个 agent，失败不影响清单。
 - **推理**：`POST /api/v2/chat/completions`（OpenAI 形状，SSE），头 `x-auth-token`、`app-id: CodeAgent3.0`、`is_confidential: false`。
 - **会话**：上游以 `x-ot-session-id` / `user-session-id` 头识别；本地 Go 参考实现存在 3 slot 上限。本项目按“每账号最大并发 + 上游会话上限”双重限制，不通过轮换突破。
 - **额度**：`GET /snap-manager/v1/statistics/plugin`。两种参考实现单位不一致（积分 vs token），**首版只展示原始字段并标 `unknown` 单位**，除非运维配置已验证换算。
@@ -142,6 +144,13 @@
 > 失效会话只在同一账号重置 upstream id，认证失败不静默换号。全部以本地 Mock 网关 +
 > 真实 Router/Provider 验证，真实账号仅冒烟；双账号负载均衡未实现，详见 `PROGRESS.md` §33。
 
+> M15-G（2026-10-30）：Qoder 目录解析补齐——响应按 scene 分组（桌面端读 `app`，抓包协议是
+> `chat`），现在先取 `chat`、缺失时回退 `app`；每条记录读取 `display_name`、`max_input_tokens`
+> （缺失时回退 `default_context_window`）与 `max_output_tokens`。上游 `is_vl` **不作为视觉能力
+> 依据**：同日实测 `kmodel` 附图答 "Blue"、无图答 "Missing"，而 `dmodel`/`gmodel` 在 `is_vl=true`
+> 下仍答 "Unknown" 并在推理中承认没有收到图像。视觉仍以 `verified_vision` 的实测名单为准
+> （本次新增 `kmodel`），详见 `PROGRESS.md` §69。
+
 > “计划”表示已设计接入但尚未用真实凭据验证；发布前必须以实测结果替换此表。
 > 以源码事实为依据的最新能力矩阵见 §13；两表冲突时以 §13 为准。
 
@@ -231,6 +240,10 @@ Coding2API 的适配行为：
 7. 工具调用参数按增量转发。
 
 这些是协议兼容行为，不是设备/身份伪造，**可以迁移**；但每一条都需要真实请求验证。
+
+本项目当前只做客户端显式值的透传：#5 不补默认值，只在客户端设置
+`enable_thinking` / `reasoning_effort` 时原样放进上游 body。CodeArts 之外的 Provider
+没有对应上游字段证据，网关接受这些字段但不下发（模型自身是否输出 reasoning 由上游决定）。
 
 ## 10.5 模型发现
 

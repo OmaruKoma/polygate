@@ -18,6 +18,7 @@ use crate::protocol::{
 };
 
 use super::error::classify_stream_error;
+use crate::providers::{is_image_media, openai_content};
 
 /// Upstream request body. `stream` is always true: non-streaming calls aggregate
 /// the same stream locally.
@@ -45,6 +46,15 @@ pub fn build_body(request: &ChatRequest, chat_id: &str) -> Result<Value, Gateway
     if !request.stop.is_empty() {
         body.insert("stop".into(), json!(request.stop));
     }
+    // The upstream accepts both knobs as top-level fields (the reference
+    // implementation sends them by default); forward the caller's explicit
+    // values instead of inventing a default.
+    if let Some(enable_thinking) = request.enable_thinking {
+        body.insert("enable_thinking".into(), json!(enable_thinking));
+    }
+    if let Some(reasoning_effort) = &request.reasoning_effort {
+        body.insert("reasoning_effort".into(), json!(reasoning_effort));
+    }
     if !request.tools.is_empty() {
         body.insert("tools".into(), json!(tools_to_upstream(request)?));
     }
@@ -59,15 +69,6 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
 }
 
 fn message_to_upstream(message: &ChatMessage) -> Result<Value, GatewayError> {
-    for block in &message.content {
-        if let ContentBlock::Unsupported { media_type, .. } = block {
-            return Err(GatewayError::new(
-                ErrorKind::Unsupported,
-                format!("CodeArts adapter cannot forward `{media_type}` content blocks"),
-            ));
-        }
-    }
-
     let text = message
         .content
         .iter()
@@ -82,6 +83,17 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Value, GatewayError> {
             let result = message.tool_results().next().ok_or_else(|| {
                 GatewayError::bad_request("a `tool` message must carry a tool result")
             })?;
+            if message.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::Unsupported { media_type, .. } if is_image_media(media_type)
+                )
+            }) {
+                return Err(GatewayError::new(
+                    ErrorKind::Unsupported,
+                    "a `tool` message cannot carry image content",
+                ));
+            }
             Ok(json!({
                 "role": "tool",
                 "tool_call_id": result.tool_call_id,
@@ -89,26 +101,39 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Value, GatewayError> {
             }))
         }
         role => {
+            let tool_calls = message
+                .tool_calls()
+                .map(tool_call_to_upstream)
+                .collect::<Vec<_>>();
+            let content = if tool_calls.is_empty() {
+                openai_content("CodeArts", &message.content)?
+            } else {
+                // Assistant turns with tool calls must send text (or null),
+                // never an image part list.
+                if message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        ContentBlock::Unsupported { media_type, .. } if is_image_media(media_type)
+                    )
+                }) {
+                    return Err(GatewayError::new(
+                        ErrorKind::Unsupported,
+                        "an assistant tool-call message cannot carry image content",
+                    ));
+                }
+                if text.is_empty() {
+                    Value::Null
+                } else {
+                    json!(text)
+                }
+            };
             let mut object = Map::new();
             object.insert("role".into(), json!(role_name(role)));
             if let Some(name) = &message.name {
                 object.insert("name".into(), json!(name));
             }
-            let tool_calls = message
-                .tool_calls()
-                .map(tool_call_to_upstream)
-                .collect::<Vec<_>>();
-            if tool_calls.is_empty() {
-                object.insert("content".into(), json!(text));
-            } else {
-                object.insert(
-                    "content".into(),
-                    if text.is_empty() {
-                        Value::Null
-                    } else {
-                        json!(text)
-                    },
-                );
+            object.insert("content".into(), content);
+            if !tool_calls.is_empty() {
                 object.insert("tool_calls".into(), json!(tool_calls));
             }
             Ok(Value::Object(object))
@@ -555,6 +580,21 @@ mod tests {
     }
 
     #[test]
+    fn thinking_hints_are_forwarded_only_when_the_caller_set_them() {
+        let mut request = request();
+        assert!(build_body(&request, "abc123")
+            .expect("body")
+            .get("enable_thinking")
+            .is_none());
+
+        request.enable_thinking = Some(true);
+        request.reasoning_effort = Some("medium".into());
+        let body = build_body(&request, "abc123").expect("body");
+        assert_eq!(body["enable_thinking"], true);
+        assert_eq!(body["reasoning_effort"], "medium");
+    }
+
+    #[test]
     fn tool_history_roundtrips() {
         let mut assistant = ChatMessage::assistant("checking");
         assistant.content.push(ContentBlock::ToolCall(ToolCall::new(
@@ -580,6 +620,23 @@ mod tests {
         assert_eq!(messages[0]["content"], "checking");
         assert_eq!(messages[1]["role"], "tool");
         assert_eq!(messages[1]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn image_parts_become_an_openai_content_array() {
+        let mut message = ChatMessage::user("what color is this");
+        let part = json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}});
+        message.content.push(ContentBlock::Unsupported {
+            media_type: "image_url".into(),
+            data: part.clone(),
+        });
+        let upstream = message_to_upstream(&message).expect("image message");
+        assert_eq!(upstream["content"][0]["type"], "text");
+        assert_eq!(upstream["content"][0]["text"], "what color is this");
+        assert_eq!(upstream["content"][1], part);
+
+        let text_only = message_to_upstream(&ChatMessage::user("plain")).expect("text");
+        assert_eq!(text_only["content"], "plain");
     }
 
     #[test]

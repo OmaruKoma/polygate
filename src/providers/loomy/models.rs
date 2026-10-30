@@ -51,12 +51,18 @@ pub fn parse_catalog(value: &Value) -> Result<Vec<UpstreamModel>, GatewayError> 
             .get("max_output_tokens")
             .and_then(Value::as_u64)
             .or_else(|| item.get("max_output").and_then(Value::as_u64));
+        let supports_vision = item
+            .get("capabilities")
+            .and_then(|caps| caps.get("vision"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let mut model = UpstreamModel::new(id);
         if let Some(name) = display_name {
             model = model.with_display_name(name);
         }
         model.context_window = context_window;
         model.max_output = max_output;
+        model.supports_vision = supports_vision;
         models.push(model);
     }
 
@@ -82,7 +88,8 @@ mod tests {
                 {"id": "deepseek-v4-flash-0731", "name": "DeepSeek V4 Flash (x0.3)", "type": "chat",
                  "context_length": 262144, "max_output_tokens": 32768,
                  "capabilities": {"reasoning": true, "vision": false}},
-                {"id": "spark-x", "name": "Spark X (x0.1)", "type": "chat"},
+                {"id": "spark-x", "name": "Spark X (x0.1)", "type": "chat",
+                 "capabilities": {"vision": true}},
                 {"id": "qwen-image-3.0-pro", "name": "Qwen Image", "type": "image"}
             ]
         }))
@@ -95,6 +102,8 @@ mod tests {
             models[0].display_name.as_deref(),
             Some("DeepSeek V4 Flash (x0.3)")
         );
+        assert!(!models[0].supports_vision);
+        assert!(models[1].supports_vision);
     }
 
     #[test]

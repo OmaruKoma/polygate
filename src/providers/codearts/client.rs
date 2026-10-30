@@ -28,6 +28,8 @@ const MAX_SSE_LINE_BYTES: usize = 1024 * 1024;
 
 pub const CHAT_PATH: &str = "/api/v2/chat/completions";
 pub const MODEL_BUILTIN_PATH: &str = "/v1/model/builtin";
+pub const AGENT_USERS_PATH: &str = "/v1/agent-center/agents/useragents";
+pub const AGENT_DETAIL_PATH: &str = "/v1/agent-center/agents/detail";
 pub const QUOTA_PATH: &str = "/snap-manager/v1/statistics/plugin";
 pub const STATISTICS_PLUGIN_PATH: &str = QUOTA_PATH;
 

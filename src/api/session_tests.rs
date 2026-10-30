@@ -105,6 +105,7 @@ where
         display_name: Some("Qoder Model".into()),
         context_window: Some(128_000),
         max_output: None,
+        supports_vision: false,
     }]);
 
     let sessions =

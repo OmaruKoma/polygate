@@ -26,6 +26,9 @@ pub struct ModelEntry {
     pub display_name: Option<String>,
     pub context_window: Option<u64>,
     pub max_output: Option<u64>,
+    /// Upstream catalogue declaration; the gateway still rejects image input
+    /// until an adapter implements forwarding.
+    pub supports_vision: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -97,12 +100,26 @@ impl ModelCatalog {
                 };
                 available.sort_by(|a, b| a.id.cmp(&b.id));
                 let Some(account) = available.into_iter().next() else {
+                    tracing::info!(
+                        provider = %info.id,
+                        "model discovery skipped: no dispatchable account"
+                    );
                     continue;
                 };
                 let Ok(context) = accounts.authorization_context(&account.id).await else {
+                    tracing::info!(
+                        provider = %info.id,
+                        account = %account.id,
+                        "model discovery skipped: authorization context unavailable"
+                    );
                     continue;
                 };
                 let Some(credential) = context.credential else {
+                    tracing::info!(
+                        provider = %info.id,
+                        account = %account.id,
+                        "model discovery skipped: account has no stored credential"
+                    );
                     continue;
                 };
                 // Let an expiring credential rotate itself first: an STS token
@@ -124,7 +141,15 @@ impl ModelCatalog {
                     .unwrap_or(credential)
             };
             match provider.list_models(&credential).await {
-                Ok(models) => Self::push_models(&mut entries, key, models),
+                Ok(models) => {
+                    if models.is_empty() {
+                        tracing::warn!(
+                            provider = %info.id,
+                            "model discovery returned no models"
+                        );
+                    }
+                    Self::push_models(&mut entries, key, models)
+                }
                 Err(err) => {
                     // Name the provider and the reason: a silently missing
                     // provider is the hardest kind of catalogue gap to explain.
@@ -158,6 +183,7 @@ impl ModelCatalog {
                 display_name: model.display_name,
                 context_window: model.context_window,
                 max_output: model.max_output,
+                supports_vision: model.supports_vision,
             });
         }
     }

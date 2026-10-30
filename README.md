@@ -365,7 +365,9 @@ verification = "verified"          # 控制台徽标：verified / experimental /
 - **模型目录在启动时发现**：新增账号或 Provider 后需要重启网关，`/v1/models` 才会出现新模型。
   管理台会提示 `restart_required`。
 - **单实例**：调度器状态与 SQLite 写锁都在进程内，不支持多实例共享同一个数据库。
-- **图片与多模态输入未验证**：能力矩阵里的 vision 只表示上游声明支持，未做真实请求验证。
+- **图片输入**：上游目录声明 `vision` 的模型（CodeArts 2 个、Loomy 6 个）加上实测确认可读图的
+  15 个未声明模型（Qoder / WorkBuddy / OfficeAce），共 23 个模型已用 64×64 纯色 PNG 实测；
+  其余模型带图仍返回 400。`GET /v1/models` 的 `polygate.capabilities.vision` 是权威列表。
 - **签到需要显式开启**：`checkin.claim_enabled` 默认关闭；是否允许自动化由操作者对该上游负责。
 - **TRAE 尚无真实账号**：协议、刷新、额度与签到只经过 Mock 验证，状态保持 MockVerified。
 - **Intl 的部分能力受上游影响**：CodeArts Intl 的签到会被上游额度策略拒绝，Qoder Intl 的额度

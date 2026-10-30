@@ -17,6 +17,7 @@ use crate::protocol::{
     ChatMessage, ChatRequest, ChatResponse, ContentBlock, FinishReason, MessageRole, StreamEvent,
     ToolCall, ToolChoice, Usage,
 };
+use crate::providers::{is_image_media, openai_content};
 
 use super::region;
 
@@ -57,14 +58,6 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
 }
 
 fn message_to_upstream(message: &ChatMessage) -> Result<Value, GatewayError> {
-    for block in &message.content {
-        if let ContentBlock::Unsupported { media_type, .. } = block {
-            return Err(GatewayError::new(
-                ErrorKind::Unsupported,
-                format!("OfficeAce adapter cannot forward `{media_type}` content blocks"),
-            ));
-        }
-    }
     let text = message
         .content
         .iter()
@@ -79,6 +72,17 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Value, GatewayError> {
             let result = message.tool_results().next().ok_or_else(|| {
                 GatewayError::bad_request("a `tool` message must carry a tool result")
             })?;
+            if message.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::Unsupported { media_type, .. } if is_image_media(media_type)
+                )
+            }) {
+                return Err(GatewayError::new(
+                    ErrorKind::Unsupported,
+                    "a `tool` message cannot carry image content",
+                ));
+            }
             Ok(json!({
                 "role": "tool",
                 "tool_call_id": result.tool_call_id,
@@ -86,11 +90,6 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Value, GatewayError> {
             }))
         }
         role => {
-            let mut object = Map::new();
-            object.insert("role".into(), json!(role_name(role)));
-            if let Some(name) = &message.name {
-                object.insert("name".into(), json!(name));
-            }
             let tool_calls = message
                 .tool_calls()
                 .map(|call| {
@@ -101,20 +100,33 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Value, GatewayError> {
                     })
                 })
                 .collect::<Vec<_>>();
-            if tool_calls.is_empty() {
-                object.insert("content".into(), json!(text));
+            let content = if tool_calls.is_empty() {
+                openai_content("OfficeAce", &message.content)?
             } else {
-                // `null` content next to `tool_calls` is legal OpenAI but some
-                // gateways drop such a message and orphan the tool result; an
-                // empty string is semantically the same and always accepted.
-                object.insert(
-                    "content".into(),
-                    if text.is_empty() {
-                        json!("")
-                    } else {
-                        json!(text)
-                    },
-                );
+                if message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        ContentBlock::Unsupported { media_type, .. } if is_image_media(media_type)
+                    )
+                }) {
+                    return Err(GatewayError::new(
+                        ErrorKind::Unsupported,
+                        "an assistant tool-call message cannot carry image content",
+                    ));
+                }
+                if text.is_empty() {
+                    json!("")
+                } else {
+                    json!(text)
+                }
+            };
+            let mut object = Map::new();
+            object.insert("role".into(), json!(role_name(role)));
+            if let Some(name) = &message.name {
+                object.insert("name".into(), json!(name));
+            }
+            object.insert("content".into(), content);
+            if !tool_calls.is_empty() {
                 object.insert("tool_calls".into(), json!(tool_calls));
             }
             Ok(Value::Object(object))

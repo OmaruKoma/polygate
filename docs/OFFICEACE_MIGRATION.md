@@ -14,6 +14,10 @@ OfficeAce 的聊天是**标准 OpenAI 协议**，比 CodeArts/Qoder 简单；复
 | 积分 / 签到 | `{gateway}/v1/subscription*` | `V11-HMAC-SHA256`（临时 AK/SK） | 约 2 小时 |
 | 登录辅助 | `{cloud}/v1/claw/*` | `SDK-HMAC-SHA256`（临时 AK/SK） | 同上 |
 
+模型目录 `/v2/models` 只回 `id`/`name`，不带上限；PolyGate 用
+`officeace2api`（MIT）`KNOWN_META` 表做 fallback（1M/256K/198K/128K → 数字），
+上游有值时不覆盖。该参考项目的 `modelProbe` 只用 `max_tokens:1` 探活，不探测 context。
+
 `{gateway}` 每个账号不同（`client-permission-validate` 下发），
 `{cloud}` 固定 `https://agentarts.cn-southwest-2.myhuaweicloud.com`。
 

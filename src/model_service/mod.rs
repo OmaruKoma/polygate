@@ -24,9 +24,39 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::api::ModelCatalog;
+use crate::config::{ProviderKind, Region};
 use crate::error::{ErrorKind, GatewayError};
 use crate::providers::{Capabilities, ProviderKey, ProviderRegistry};
 use crate::storage::{ModelRoutePatch, ModelRouteRow, NewModelRoute, Storage};
+
+/// Image input verified end-to-end (64×64 red/blue PNG, 2026-10-30) on models
+/// whose upstream catalogue does not declare vision. Curated by observation,
+/// not by model name: entries appear here only after a real request returned
+/// the right colour.
+pub fn verified_vision(kind: ProviderKind, region: Region, model: &str) -> bool {
+    use ProviderKind::{Officeace, Qoder, Workbuddy};
+    use Region::{Cn, Intl};
+    matches!(
+        (kind, region, model),
+        (
+            Qoder,
+            Cn,
+            "auto" | "qmodel_38max" | "kmodel_latest" | "kmodel"
+        ) | (Qoder, Intl, "cmodel" | "ultimate")
+            | (
+                Workbuddy,
+                Cn,
+                "glm-5.3"
+                    | "deepseek-v4.1-flash"
+                    | "kimi-k3.1-pro"
+                    | "glm-5.3-flash"
+                    | "hy4-preview"
+                    | "mimo-v2.6-pro"
+            )
+            | (Workbuddy, Intl, "kimi-k3" | "deepseek-v4.1-flash")
+            | (Officeace, Cn, "deepseek-v4.1-flash" | "kimi-k3")
+    )
+}
 
 /// Per-target capability overrides. `null`/absent means "inherit from the
 /// provider declaration"; `vision`/`reasoning` default to `false`.
@@ -267,7 +297,11 @@ impl ModelRouteService {
                 };
                 let info = info.info();
                 let caps = registry.capabilities(&entry.provider).unwrap_or_default();
-                let effective = RouteCapabilities::default().effective(&caps);
+                let mut effective = RouteCapabilities::default().effective(&caps);
+                // The upstream catalogue is the only evidence for vision on a
+                // native model; a route override cannot exist for one.
+                effective.vision |= entry.supports_vision
+                    || verified_vision(entry.provider.kind, entry.provider.region, &entry.id);
                 if let Some(missing) = needs.missing(&effective) {
                     return Err(GatewayError::bad_request(format!(
                         "model `{name}` does not support {missing}"
@@ -540,4 +574,34 @@ pub fn alias_model_json(view: &AliasView, registry: &ProviderRegistry) -> Option
             }
         }
     }))
+}
+
+#[cfg(test)]
+mod verified_vision_tests {
+    use super::*;
+
+    #[test]
+    fn only_live_checked_models_are_allowlisted() {
+        assert!(verified_vision(ProviderKind::Qoder, Region::Cn, "auto"));
+        assert!(verified_vision(
+            ProviderKind::Workbuddy,
+            Region::Intl,
+            "kimi-k3"
+        ));
+        assert!(verified_vision(
+            ProviderKind::Officeace,
+            Region::Cn,
+            "kimi-k3"
+        ));
+        assert!(!verified_vision(
+            ProviderKind::Workbuddy,
+            Region::Cn,
+            "minimax-m3.1-flash"
+        ));
+        assert!(!verified_vision(ProviderKind::Loomy, Region::Cn, "auto"));
+        assert!(verified_vision(ProviderKind::Qoder, Region::Cn, "kmodel"));
+        // `is_vl` says otherwise, but both answered "Unknown" with an image.
+        assert!(!verified_vision(ProviderKind::Qoder, Region::Cn, "dmodel"));
+        assert!(!verified_vision(ProviderKind::Qoder, Region::Cn, "gmodel"));
+    }
 }

@@ -254,6 +254,14 @@ async fn list_models(State(state): State<ApiState>) -> Response {
                 "mock": info.is_mock(),
                 "test_model": info.is_mock(),
                 "verification": info.verification.as_str(),
+                "capabilities": {
+                    "vision": entry.supports_vision
+                        || crate::model_service::verified_vision(
+                            entry.provider.kind,
+                            entry.provider.region,
+                            &entry.id,
+                        ),
+                },
             }
         }));
     }
@@ -401,7 +409,13 @@ fn legacy_resolve(
         .registry
         .capabilities(&entry.provider)
         .unwrap_or_default();
-    let capabilities = crate::model_service::RouteCapabilities::default().effective(&declared);
+    let mut capabilities = crate::model_service::RouteCapabilities::default().effective(&declared);
+    capabilities.vision |= entry.supports_vision
+        || crate::model_service::verified_vision(
+            entry.provider.kind,
+            entry.provider.region,
+            &entry.id,
+        );
     if let Some(missing) = needs.missing(&capabilities) {
         return Err(GatewayError::bad_request(format!(
             "model `{name}` does not support {missing}"

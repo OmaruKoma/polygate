@@ -5076,3 +5076,260 @@ POST /admin/api/accounts/{id}/quota      → unknown（"statistics response has 
 路由器（10.0.0.1，sha256 `ebacb84c…0217a169`）已开启 `request_logs = true` +
 `log_retention_days = 30`：`/admin/api/logs` 返回 `retention_days: 30`，新请求写入日志
 （codearts-intl GLM-5.2 200），页面提示与输入框均为 30。
+
+## 62. 客户端思考模式兼容（2026-10-30，完成）
+
+### 62.1 现象
+
+本机 Qoder 以自定义 OpenAI Provider 接网关，开启「模型设置的思考模式」后所有请求失败：
+
+```text
+400 invalid request body: Failed to deserialize the JSON body into the target type:
+enable_thinking: unknown field `enable_thinking`, expected one of `model`, `messages`,
+`stream`, `stream_options`, `max_tokens`, ...
+```
+
+### 62.2 根因
+
+Qoder 客户端的自定义 OpenAI Provider 在思考模式开启时会附加顶层 `enable_thinking`，
+并可能随预算/档位一起发 `thinking`、`reasoning_effort`、`thinking_budget`、
+`reasoning_budget_tokens`、`preserve_thinking`（`qoder-worker-runtime` 的
+`s1i(...)`/`bll(...)` 字段白名单）。网关的 `ChatCompletionRequest` 用
+`deny_unknown_fields` 严格反序列化，第一个未知字段就整单 400，因此与模型/账号无关。
+
+### 62.3 修改
+
+- `src/api/openai.rs`：接受上述 6 个字段；`thinking.type`（`enabled`/`adaptive`/
+  `disabled`）与 `enable_thinking` 归一化为一个布尔提示；`reasoning_effort` 去空白后
+  非空校验；两个预算字段接受但不解释。
+- `src/protocol/request.rs`：`ChatRequest` 新增 `enable_thinking` / `reasoning_effort`，
+  默认 `None`（不注入客户端未表达的任何默认值）。
+- `src/providers/codearts/convert.rs`：客户端显式设置时才把两者原样放进上游 body
+  （CodeArts 上游接受这两个字段，见 `docs/PROVIDERS.md` §10.4 #5）。
+- 其他 Provider 没有对应上游字段证据，接受但不下发；模型自身的 reasoning 输出不受影响。
+- `WireMessage` 接受 assistant 的 `reasoning_content`（Qoder `preserve_thinking` 会在后续
+  轮次回放思考内容），转成 `ContentBlock::Reasoning`；非 assistant 消息仍按 400 拒绝。
+- `WireToolCall` 接受历史回放里的 `index`（Qoder 的 `{index,id,type,function}` 形状），
+  以数组顺序为准，`index` 只做兼容不参与转换。
+- `/v1/messages` 与 `/v1/responses` 仍拒绝 thinking（Anthropic 的 thinking 块无法回放），
+  本次只修 OpenAI 兼容面。
+
+### 62.4 验证
+
+`cargo test` 753 passed（新增 6 个：网关层接受 6 个思考字段的端到端 200、`thinking.type`
+归一化、CodeArts 仅在显式设置时转发、assistant `reasoning_content` 回放、非 assistant 拒绝、
+历史 `tool_calls[].index` 兼容），`cargo fmt --check`、`cargo clippy --all-targets -D warnings` 通过。
+
+路由器实测（10.0.0.1，sha256 `36b23ed4…53a3a9`，旧版备份 `/usr/bin/polygate.bak-20261030-thinking`）：
+
+- `qoder-cn::auto` + `enable_thinking`/`reasoning_effort` → 200，返回 `reasoning_content`。
+- Qoder 形状历史（assistant `reasoning_content` + `tool_calls[].index` + tool 结果）
+  非流式与流式均 200。
+- `qoder-cn::dfmodel` / `qoder-intl::dfmodel` 在未开思考时同样返回上游 502
+  `node:oa_qwen-plus-main Execution failed: null`，与本次改动无关，属于 Qoder 上游
+  当前状态（同账号此前还出现 403 `CALL_COUNT_LIMIT` 排队）。
+- 本次重启时 CodeArts CN/Intl 的 refresh token 已失效（`AuthInvalid: re-login is required`，
+  目录发现 `APIG.0602`），需要重新授权；所以 CodeArts 路径未参与本轮实机验证。
+
+## 63. CodeArts 刷新用了错误的 client_id（2026-10-30，完成）
+
+### 63.1 现象
+
+CodeArts 账号授权后约 2 小时（STS 令牌到期）就掉线，`logread` 里反复出现：
+
+```text
+WARN CodeArts credential refresh failed kind=AuthInvalid
+     detail=CodeArts refresh token can no longer be used; re-login is required
+WARN model discovery failed provider=codearts-cn kind=AuthExpired
+     detail=Bad request: the security token has expired APIG.0602
+```
+
+### 63.2 根因
+
+授权流程用配置里的 `codearts_client_id`（默认 `codearts-snap`，`admin_auth_flows` 的
+authorize URL 可证），刷新却硬编码 `const CLIENT_ID = "codearts-agent"`（`auth.rs`）。
+refresh token 与签发它的 client 绑定，client 不匹配时 token 端点返回终态错误，被
+`classify_refresh_failure` 归类为 `AuthInvalid`，账号随即不可用；STS 到期前所有请求
+仍能跑，所以表现为“过一阵就掉”。
+
+### 63.3 修改
+
+- `src/providers/codearts/login.rs`：登录时把 `client_id` 写进加密凭据。
+- `src/providers/codearts/auth.rs`：刷新读取凭据里的 `client_id`；旧凭据没有该字段时回退
+  `codearts-snap`（与登录默认值和参考实现一致）。`codearts-agent` 是 OfficeAce 的
+  `pdp5_for_agentarts` 邻近值，不属于 CodeArts。
+- `src/api/catalog.rs`：目录发现不再静默跳过——无可用账号、取不到授权上下文、无凭据、
+  上游返回空列表都会各打一条日志，避免“Provider 凭空消失”。
+
+### 63.4 验证
+
+`cargo test` 754 passed（新增 client_id 解析与刷新表单 `client_id=codearts-snap` 断言），
+fmt/clippy 通过；路由器已更新为 sha256 `f261336b…f58ddf`。
+
+注意：复测时路由器数据库里 CodeArts 的 3 个账号（CN×2、Intl×1）已被删除，剩余 7 个账号；
+因此只能确认“不再有刷新失败日志、发现阶段报告 no dispatchable account”，
+**刷新链路需要在重新授权后等 STS 到期再确认**。
+
+## 64. 视觉能力标记（2026-10-30，完成）
+
+上游目录里本来就有视觉声明，网关之前完全丢弃：CodeArts `builtinModels[].supportsImages`、
+Loomy `capabilities.vision`。现在 `UpstreamModel`/`ModelEntry` 带 `supports_vision`，
+`GET /v1/models` 的 `polygate.capabilities.vision` 与管理台原生模型列表都会显示。
+
+实测（10.0.0.1，sha256 `77b454dd…a293ca3`，目录 10/2 个 CodeArts 模型已恢复）：
+
+| Provider | 声明支持视觉的模型 |
+| --- | --- |
+| codearts-cn | Qwen3-VL-235B、kimi-k2.6-vl |
+| loomy-cn | DeepSeek-V4.1-Flash、GLM-5.3-Flash、Kimi-k2.6、MiniMax-M3、mimo-v2.5、qwen3.8-flash |
+| codearts-intl / qoder-* / workbuddy-* / officeace-cn | 目录未声明（不等于不支持） |
+
+限制：这只是**目录声明**。`/v1/chat/completions` 的图片 part 仍会被保存成
+`Unsupported` 块，各 Provider 适配器都拒绝转发，所以带图请求依旧 400；
+要真正可用需要实现 image_url → 上游 content 数组的转发（CodeArts/Loomy 是 OpenAI 形状，
+Qoder/TRAE 的内部协议未验证）。测试 754 passed，fmt/clippy 通过。
+
+## 65. 图片输入打通与八模型实测（2026-10-30，完成）
+
+### 65.1 实现
+
+- `WireMessage` 的 `image_url`/`image`/`input_image` part 仍存成 `ContentBlock::Unsupported`，
+  但 `providers::openai_content` 会把它识别为图片并原样放回 content 数组；纯文本消息仍是
+  字符串（部分上游不接受文本 part 数组）。
+- CodeArts 与 Loomy 适配器改用该 helper：user/system 消息可带图，tool 消息与
+  assistant 工具调用消息仍拒绝图片。其余适配器（Qoder/TRAE/WorkBuddy/OfficeAce）
+  维持拒绝，内部协议没有图片字段证据。
+- 门控：原生模型的路由能力把目录 `supports_vision` 并入 `EffectiveCapabilities.vision`，
+  未声明的模型继续 400；别名仍按路由覆盖值。
+
+### 65.2 实测（64×64 纯色 PNG，先红后蓝，`max_tokens` 256）
+
+| 模型 | 红图 | 蓝图 | 结论 |
+| --- | --- | --- | --- |
+| codearts-cn::Qwen3-VL-235B | Red | Blue | 可读图 |
+| codearts-cn::kimi-k2.6-vl | Red | Blue | 可读图 |
+| loomy-cn::DeepSeek-V4.1-Flash | Red | Blue | 可读图 |
+| loomy-cn::GLM-5.3-Flash | Red | Blue | 可读图 |
+| loomy-cn::Kimi-k2.6 | Red | Blue | 可读图 |
+| loomy-cn::MiniMax-M3 | White（首测 32 token 截断后自述“看不到图”） | Blue | 可读图 |
+| loomy-cn::mimo-v2.5 | red | Blue | 可读图 |
+| loomy-cn::qwen3.8-flash | Red | Blue | 可读图 |
+
+流式请求（`stream=true`，Qwen3-VL）同样 200；非流式正文里的颜色与图一致。
+未声明 vision 的模型（qoder-*、workbuddy-*、officeace-cn、codearts-intl）本轮未开放测试。
+
+`cargo test` 755 passed（新增 CodeArts 图片 content 数组测试），fmt/clippy 通过；
+路由器 sha256 `cdab31d0…60c276`。
+
+## 66. 未声明视觉模型的实测试验（2026-10-30，完成）
+
+目录没声明不等于不能读图，所以临时放开视觉闸门，用 64×64 纯蓝/纯红 PNG 交叉验证
+（蓝、红两轮都答对才算通过）。
+
+**通过（15 个，已写入 `model_service::verified_vision` 允许表）**
+
+| Provider | 模型 |
+| --- | --- |
+| qoder-cn | auto、qmodel_38max、kmodel_latest |
+| qoder-intl | cmodel、ultimate |
+| workbuddy-cn | glm-5.3、glm-5.3-flash、deepseek-v4.1-flash、kimi-k3.1-pro、hy4-preview、mimo-v2.6-pro |
+| workbuddy-intl | kimi-k3、deepseek-v4.1-flash（首条必须是 system，否则 11128） |
+| officeace-cn | deepseek-v4.1-flash、kimi-k3 |
+
+**明确不行**
+
+- `codearts-intl::GLM-5.2`：上游 `inferhub.001001020.406 the request model is not multimodal`。
+- `officeace-cn::glm-5.3` / `glm-5.2`：`messages.content.type 参数非法，取值范围 ['text']`。
+- `officeace-cn::qwen3-30b-a3b` / `qwen3-32b`：`/models/ is not a multimodal model`。
+- `officeace-cn::kimi-k3.1-pro` / `deepseek-v4-pro` / `openpangu-2.0-flash`：该账号无权使用。
+- `workbuddy-intl::glm-5.3`：请求 200，但模型自述看不到图，不计入。
+- `workbuddy-cn::minimax-m3.1-flash`：蓝图答 Blue、红图答 white，不稳定，不计入。
+
+**实现**：新增 `verified_vision(kind, region, model)` 白名单，原生路由与 `/v1/models`、
+管理台的原生模型列表都按“目录声明 ∪ 实测白名单”计算 `vision`；白名单之外的模型带图仍 400。
+同时把 WorkBuddy / OfficeAce / Qoder 适配器的 user/system content 改为可转发 `image_url`
+（tool 与 assistant 工具调用消息仍拒绝图片）。
+
+`cargo test` 756 passed（新增白名单测试），fmt/clippy 通过；路由器 sha256
+`9c6f593c…700f4fda`。`/v1/models` 现在有 23 个模型的 `polygate.capabilities.vision=true`。
+
+## 67. CodeArts 目录补上下文长度（2026-10-30，完成）
+
+`builtinModels` 本身不带 token 限制，之前 `/v1/models` 里 CodeArts 的长度全是 `null`。
+参考实现（`codearts2api/app/codearts/model_catalog.py`）是从 **agent 详情**里取的：
+`GET /v1/agent-center/agents/useragents` → 按名称/show_in_ide 排序 → 最多 6 个
+`GET /v1/agent-center/agents/detail?agent_id=…`（`Agent-Type: AgentCenter`），
+在 `model_parameters` 里找 `context_window`/`input_length`/`input_context_window` 与
+`max_tokens`/`output_context_window`。
+
+实现：`codearts::models::extract_agent_models` + `merge_agent_metadata`，
+`list_models` 在 builtin 成功后再尽力合并 agent 元数据；探测全部 6 个 agent（不只第一个），
+单个 agent 失败跳过。实测（sha256 `976817b9…15cf36f`）：
+
+| 模型 | context_window |
+| --- | --- |
+| GLM-5.1 / GLM-5.2 / glm-5.2-sft-harmony | 202752 |
+| deepseek-v4.1-flash / -1017 / glm-5.3 / kimi-k3 | 1048576 |
+| openpangu-2.0-flash / -pro | 524288 |
+| Qwen3-VL-235B / kimi-k2.6-vl | 仍为 null（agent 详情未列出） |
+
+`cargo test` 757 passed（新增 agent 嵌套模型提取/合并测试），fmt/clippy 通过。
+
+OfficeAce 部分模型报 `81004/81009` 是**账号权限**（套餐不含该模型），不是目录错误；
+目录按上游清单全量展示，权限由账号侧决定。
+
+## 68. OfficeAce 上下文长度补录（2026-10-30，完成）
+
+调查 `Q-shuang-dot/officeace2api`（MIT）：它**不探测** context，而是 `src/models.mjs`
+里一张静态 `KNOWN_META` 表（`1M`/`198K`/`256K`/`128K` 字符串），`modelProbe.mjs`
+只用 `max_tokens:1` 探活并把不可用模型写进 `data/model-probe.json`。
+
+采纳其事实表作为 OfficeAce 目录的 fallback（`officeace/models.rs::known_context` /
+`known_vision`）：上游 `/v2/models` 自己给长度时优先用上游值，没给才查表。
+换算：1M=1048576、256K=262144、198K=202752、128K=131072。
+
+实测（sha256 `a8a74f73…5b73f5`）：25 个模型里 12 个有长度——
+deepseek-v4-flash/-0731/-v4-pro/v4.1-flash 1M，glm-5.1/5.2/5.3 202752，
+kimi-k2.6 262144，qwen3-32b/qwen3-30b-a3b/openpangu-2.0-flash/-pro 131072。
+其余是表里没有的变体（*-1017、*-harmony、kimi-k3 系等），保持 `null`，不猜。
+
+`cargo test` 757 passed（OfficeAce 用例覆盖 fallback 与“上游优先”），fmt/clippy 通过。
+
+## 69. Qoder 模型目录字段补齐，`is_vl` 不作为视觉依据（2026-10-30，完成）
+
+起因：怀疑「模拟旧版 CLI 导致看不到模型」。查证结果是否定的——桌面端（0.4.11 内置
+agent SDK）与网关请求的是同一个 `/api/v2/model/list`：
+
+```
+operation=listModels method=GET url=https://gateway.qoder.com.cn/api/v2/model/list
+  status=200 duration=1039ms          # ~/.qoder-cn/logs/runs/.../qodercli.log
+```
+
+真正丢的是**每条模型的元数据**。SDK 解析的字段包括 `key`、`display_name`、`is_vl`、
+`is_reasoning`、`is_free`、`enable`、`max_input_tokens`、`max_output_tokens`、
+`default_context_window`、`available_context_windows`、`efforts`、`price_factor` 等；
+`parse_models` 此前只取 `key`/`display_name`/`max_input_tokens`。
+
+改动（`src/providers/qoder/gateway.rs`）：
+
+- 响应按 scene 分组：先取 `chat`，缺失时回退 `app`（桌面端 `default` 指针记录的是 `app`）；
+- 新增 `max_output_tokens → max_output`、`default_context_window` 作为上下文长度回退；
+- `is_vl` 解析后**先启用、经实测后放弃**（见下）。
+
+`is_vl` 实测（64×64 纯蓝图，`qoder-cn`）：
+
+| 模型 | 附图 | 无图 |
+|---|---|---|
+| kmodel（Kimi-K2.8-Preview） | `Blue` | `Missing` |
+| dmodel（DeepSeek-V4-Pro） | `Unknown`（推理自述“没有实际图像”） | `Unknown` |
+| gmodel（GLM-5.3） | `Unknown` | — |
+| qfmodel / dfmodel | 502 `[FAIL]node:oa_qwen-plus-*` | 502 |
+
+结论：`is_vl` 是粗粒度目录标记，不能当能力事实。最终保留 scene 回退与长度/名称字段，
+视觉仍由 `model_service::verified_vision` 的实测名单决定，并新增 `kmodel`；`dmodel`/`gmodel`
+写入反向断言，防止以后又按 `is_vl` 放开。
+
+验证：`cargo test` 758 passed（新增 `the_app_scene_is_read_when_chat_is_absent` 与
+`is_vl` 不作为视觉的断言）；fmt/clippy 通过；aarch64-musl 重新构建并部署到 10.0.0.1，
+`/v1/models` 里 qoder-cn 视觉为 `auto`/`qmodel_38max`/`kmodel_latest`/`kmodel` 四个，其余 false。
+同时观察到 qoder-intl 目录只剩 `dfmodel`/`qfmodel`（重新授权后），未深究。

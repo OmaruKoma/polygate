@@ -99,6 +99,8 @@ async fn model_list_is_signed_and_parsed() {
                         "key": "qmodel_38max",
                         "display_name": "Qwen 3.8 Max",
                         "max_input_tokens": 262144,
+                        "max_output_tokens": 65536,
+                        "is_vl": true,
                         "supportsToolCall": true
                     },
                     {"display_name": "no key"},
@@ -120,6 +122,11 @@ async fn model_list_is_signed_and_parsed() {
     assert_eq!(models[0].id, "qmodel_38max");
     assert_eq!(models[0].display_name.as_deref(), Some("Qwen 3.8 Max"));
     assert_eq!(models[0].context_window, Some(262_144));
+    assert_eq!(models[0].max_output, Some(65_536));
+    assert!(
+        !models[0].supports_vision,
+        "`is_vl` is not a capability fact; vision comes from live tests"
+    );
 
     let requests = server.requests();
     assert_eq!(requests.len(), 1);
@@ -138,6 +145,25 @@ fn an_empty_or_missing_catalogue_is_a_discovery_failure() {
     assert_eq!(missing.kind, ErrorKind::UpstreamServer);
     let unnamed = parse_models(&json!({"chat": [{"display_name": "x"}]})).unwrap_err();
     assert_eq!(unnamed.kind, ErrorKind::UpstreamServer);
+}
+
+#[test]
+fn the_app_scene_is_read_when_chat_is_absent() {
+    let models = parse_models(&json!({
+        "app": [
+            {
+                "key": "dfmodel",
+                "display_name": "DeepSeek-Flash",
+                "is_vl": "true",
+                "default_context_window": 180000
+            }
+        ]
+    }))
+    .expect("app scene");
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].id, "dfmodel");
+    assert_eq!(models[0].context_window, Some(180_000));
+    assert!(!models[0].supports_vision);
 }
 
 #[tokio::test]

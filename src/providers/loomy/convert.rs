@@ -21,6 +21,7 @@ use crate::protocol::{
     ChatMessage, ChatRequest, ChatResponse, ContentBlock, FinishReason, MessageRole, ToolCall,
     ToolChoice, Usage,
 };
+use crate::providers::{is_image_media, openai_content};
 
 pub fn build_body(request: &ChatRequest, stream: bool) -> Result<Value, GatewayError> {
     let mut body = Map::new();
@@ -57,19 +58,23 @@ pub fn build_body(request: &ChatRequest, stream: bool) -> Result<Value, GatewayE
 fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayError> {
     let mut out = Vec::with_capacity(messages.len());
     for message in messages {
-        for block in &message.content {
-            if let ContentBlock::Unsupported { media_type, .. } = block {
-                return Err(GatewayError::bad_request(format!(
-                    "Loomy adapter cannot forward `{media_type}` content blocks yet"
-                )));
-            }
-        }
         match message.role {
             MessageRole::Tool => {
                 let results: Vec<_> = message.tool_results().collect();
                 if results.is_empty() {
                     return Err(GatewayError::bad_request(
                         "a `tool` message must carry a tool result",
+                    ));
+                }
+                if message.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        ContentBlock::Unsupported { media_type, .. } if is_image_media(media_type)
+                    )
+                }) {
+                    return Err(GatewayError::new(
+                        crate::error::ErrorKind::Unsupported,
+                        "a `tool` message cannot carry image content",
                     ));
                 }
                 for result in results {
@@ -112,20 +117,13 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
                 out.push(Value::Object(object));
             }
             role => {
-                let text: String = message
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect();
+                let content = openai_content("Loomy", &message.content)?;
                 let mut object = Map::new();
                 object.insert("role".into(), json!(role_name(role)));
                 if let Some(name) = &message.name {
                     object.insert("name".into(), json!(name));
                 }
-                object.insert("content".into(), json!(text));
+                object.insert("content".into(), content);
                 out.push(Value::Object(object));
             }
         }

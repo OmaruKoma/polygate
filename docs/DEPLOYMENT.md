@@ -213,7 +213,7 @@ Provider 的端到端延迟取决于上游。请在目标机器上用相同方�
 
 ```bash
 # 1. 传二进制（约 10.5 MiB，gzip 后 4.7 MiB）
-scp polygate-0.1.0-aarch64-linux-musl root@ROUTER:/usr/bin/polygate
+scp polygate-0.2.0-aarch64-linux-musl root@ROUTER:/usr/bin/polygate
 ssh root@ROUTER 'chmod +x /usr/bin/polygate && /usr/bin/polygate --version'
 
 # 2. 配置目录

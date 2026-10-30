@@ -462,6 +462,15 @@ async fn expiring_credential_is_refreshed_with_revision_cas() {
     assert_eq!(stored.get("access_key_id"), Some("AKID-2"));
 
     let requests = server.requests();
+    let exchange = requests
+        .iter()
+        .find(|request| request.path() == "/v1/oauth2/tokens")
+        .expect("token exchange");
+    assert!(
+        exchange.body.contains("client_id=codearts-snap"),
+        "refresh must reuse the login client id: {}",
+        exchange.body
+    );
     let chat = requests
         .iter()
         .find(|request| request.path() == "/api/v2/chat/completions")

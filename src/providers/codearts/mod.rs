@@ -52,8 +52,80 @@ use crate::providers::{
 use crate::quota::QuotaSnapshot;
 
 use self::convert::{parse_sse_line, SseLine, StreamTranslator};
-use self::models::parse_models;
+use self::models::{extract_agent_models, merge_agent_metadata, parse_models};
 use self::quota::parse_quota;
+
+/// Walk the caller's agents to recover model token limits. Mirrors the
+/// reference walker: ranked agent list, then up to six detail probes, stop
+/// as soon as one detail carries a context window.
+async fn agent_models(
+    http: &client::CodeArtsHttp,
+    credential: &CodeArtsCredential,
+    now: chrono::DateTime<Utc>,
+) -> Result<Vec<UpstreamModel>, GatewayError> {
+    let users = http
+        .get_json(
+            client::AGENT_USERS_PATH,
+            credential,
+            Some("AgentCenter"),
+            now,
+        )
+        .await?;
+    let agents = users
+        .get("agents")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| {
+            users
+                .get("data")
+                .and_then(|data| data.get("agents"))
+                .and_then(serde_json::Value::as_array)
+        });
+    let Some(agents) = agents else {
+        return Ok(Vec::new());
+    };
+    let mut ranked: Vec<(u8, String)> = agents
+        .iter()
+        .filter_map(|agent| {
+            let id = agent.get("agent_id").and_then(serde_json::Value::as_str)?;
+            let name = agent
+                .get("agent_name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let rank = match name {
+                "CodeArts Doer For Coding" => 0,
+                "CodeAgent" => 1,
+                _ if agent
+                    .get("show_in_ide")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true) =>
+                {
+                    2
+                }
+                _ => 3,
+            };
+            Some((rank, id.to_string()))
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut found = Vec::new();
+    for (_, agent_id) in ranked
+        .into_iter()
+        .filter(|(_, id)| seen.insert(id.clone()))
+        .take(6)
+    {
+        let path = format!("{}?agent_id={agent_id}", client::AGENT_DETAIL_PATH);
+        let Ok(detail) = http
+            .get_json(&path, credential, Some("AgentCenter"), now)
+            .await
+        else {
+            continue;
+        };
+        found.extend(extract_agent_models(&detail));
+    }
+    Ok(found)
+}
 
 /// Wall-clock injection for tests (`None` means `Utc::now()`).
 pub type ClockFn = Arc<dyn Fn() -> chrono::DateTime<Utc> + Send + Sync>;
@@ -506,7 +578,14 @@ impl Provider for CodeArtsProvider {
                 self.now(),
             )
             .await?;
-        Ok(parse_models(&payload))
+        let mut models = parse_models(&payload);
+        // `builtinModels` carries no token limits; the agent detail payload
+        // does. Best effort: a failing agent endpoint must not hide the
+        // builtin catalogue.
+        if let Ok(extra) = agent_models(&self.http, &credential, self.now()).await {
+            merge_agent_metadata(&mut models, extra);
+        }
+        Ok(models)
     }
 
     async fn quota(&self, credential: &Credential) -> Result<QuotaSnapshot, GatewayError> {

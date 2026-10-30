@@ -22,7 +22,7 @@ use tokio_stream::Stream;
 use crate::accounts::{AuthStatus, Credential};
 use crate::config::{ProviderKind, Region, Verification};
 use crate::error::GatewayError;
-use crate::protocol::{ChatRequest, ChatResponse, StreamEvent};
+use crate::protocol::{ChatRequest, ChatResponse, ContentBlock, StreamEvent};
 use crate::quota::QuotaSnapshot;
 
 mod mock;
@@ -404,6 +404,51 @@ impl ProviderInfo {
     }
 }
 
+/// OpenAI-shaped message `content` for text and image blocks.
+///
+/// Text-only messages stay a plain string because some upstreams reject an
+/// array of text parts. Once an image is present the whole message becomes the
+/// OpenAI part array and each image part is forwarded verbatim as received by
+/// the gateway.
+pub(crate) fn openai_content(
+    adapter: &str,
+    content: &[ContentBlock],
+) -> Result<serde_json::Value, GatewayError> {
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    let mut has_image = false;
+    for block in content {
+        match block {
+            ContentBlock::Text { text: value } => {
+                text.push_str(value);
+                parts.push(serde_json::json!({"type": "text", "text": value}));
+            }
+            ContentBlock::Unsupported { media_type, data } if is_image_media(media_type) => {
+                has_image = true;
+                parts.push(data.clone());
+            }
+            ContentBlock::Unsupported { media_type, .. } => {
+                return Err(GatewayError::new(
+                    crate::error::ErrorKind::Unsupported,
+                    format!("{adapter} adapter cannot forward `{media_type}` content blocks"),
+                ));
+            }
+            ContentBlock::Reasoning { .. }
+            | ContentBlock::ToolCall(_)
+            | ContentBlock::ToolResult(_) => {}
+        }
+    }
+    if has_image {
+        Ok(serde_json::Value::Array(parts))
+    } else {
+        Ok(serde_json::Value::String(text))
+    }
+}
+
+pub(crate) fn is_image_media(media_type: &str) -> bool {
+    media_type == "image_url" || media_type == "image" || media_type == "input_image"
+}
+
 /// A model as reported by the upstream. Unified routing ids and aliases are
 /// applied by `models::ModelRegistry`, not here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,6 +457,8 @@ pub struct UpstreamModel {
     pub display_name: Option<String>,
     pub context_window: Option<u64>,
     pub max_output: Option<u64>,
+    /// Upstream catalogue says the model accepts image input.
+    pub supports_vision: bool,
 }
 
 impl UpstreamModel {
@@ -421,7 +468,13 @@ impl UpstreamModel {
             display_name: None,
             context_window: None,
             max_output: None,
+            supports_vision: false,
         }
+    }
+
+    pub fn with_vision(mut self, supports_vision: bool) -> Self {
+        self.supports_vision = supports_vision;
+        self
     }
 
     pub fn with_display_name(mut self, name: impl Into<String>) -> Self {

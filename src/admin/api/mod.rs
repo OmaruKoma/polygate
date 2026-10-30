@@ -292,6 +292,12 @@ async fn model_routes_body(state: &AdminState) -> Result<Value, GatewayError> {
                     "region": entry.provider.region.as_str(),
                     "display_name": entry.display_name,
                     "context_window": entry.context_window,
+                    "supports_vision": entry.supports_vision
+                        || crate::model_service::verified_vision(
+                            entry.provider.kind,
+                            entry.provider.region,
+                            &entry.id,
+                        ),
                     "available": state.registry.is_enabled(&entry.provider),
                 }),
             )
