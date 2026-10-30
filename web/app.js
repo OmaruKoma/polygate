@@ -18,10 +18,13 @@
     codearts: {
       label: "CodeArts",
       authPath: "codearts",
-      siteNote: "将打开华为 CodeArts 官方授权页面。PolyGate 只保存授权返回的凭据，不接触账号密码。",
+      siteNote:
+        "将打开华为 CodeArts 官方授权页面。PolyGate 只保存授权返回的凭据，不接触账号密码。授权完成后浏览器会跳到 127.0.0.1 的回调页；若该地址打不开（例如面板在路由器上），把地址栏链接粘贴回本窗口即可。",
       startLabel: "打开授权页面",
       successToast: "CodeArts 账号授权成功",
       supportsCheckin: true,
+      pasteCallback: true,
+      autoCheckNote: "等待在官方页面完成授权；回调页打不开时把地址栏链接粘贴到下方。",
     },
     qoder: {
       label: "Qoder",

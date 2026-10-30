@@ -4374,3 +4374,58 @@ $ cargo test --workspace                         646 passed
 ```
 
 `/etc/polygate/config.toml.bak-20261030`、`.bak2-20261030` 为两次配置变更的备份。
+
+## 48. CodeArts 远端授权：粘贴回调模式（2026-10-30，完成）
+
+### 48.1 现象
+
+软路由（`listen = 10.0.0.1:8787`）上把 `[admin] redirect_url` 改成局域网地址后，重新授权
+失败，回调页显示 `CodeArts authorization was rejected (STS5.1805)`；而此前
+`redirect_url = 127.0.0.1` 的流程成功建立了 `hsggga` 账号。
+
+### 48.2 证据
+
+路由器数据库 `admin_auth_flows`：
+
+| 时间（UTC） | redirect_uri | 状态 | 错误 |
+| --- | --- | --- | --- |
+| 02:38:09 | `http://127.0.0.1:8787/oauth/callback` | succeeded | — |
+| 02:46:31 | `http://10.0.0.1:8787/oauth/callback` | failed | `CodeArts authorization was rejected (STS5.1805)` |
+| 02:47:10 | `http://10.0.0.1:8787/oauth/callback` | failed | 同上 |
+| 02:49:31 | intl 流程 | pending → 过期 | — |
+
+参考实现 `RobbsLuo_Coding2API` 的 CodeArts OAuth 固定使用
+`http://127.0.0.1:{port}{redirect_path}`，并专门提供 “paste” 轨道：
+「门户把 code 302 回 `127.0.0.1:{port}`（服务端不监听），用户把地址栏链接粘回来」。
+即上游把 code 绑定在回环回调上，非回环 `redirect_uri` 在换取 token 时会被拒绝。
+
+### 48.3 变更
+
+| 文件 | 变更 |
+| --- | --- |
+| `src/admin/auth/flow.rs` | 新增 `complete_codearts_flow(flow_id, raw)` 与 `code_from_callback`（接受完整回调 URL 或裸 code）；把原 `complete_active_flow` 的下半段抽成 `finish_codearts_flow` |
+| `src/admin/api/mod.rs` | 新增 `POST /admin/api/auth/codearts/{flow_id}/complete`（需要管理会话 + CSRF） |
+| `src/admin/mod.rs` | 注册上述路由 |
+| `web/app.js` | CodeArts 描述符加 `pasteCallback: true`，复用 TRAE 已有的粘贴框与 `completePasteFlow` |
+| `src/providers/codearts/login.rs` | 令牌交换失败时附带上游 `error_description`（截断 160 字符、去控制字符），新增 2 个单测 |
+| `src/admin/auth/flow.rs` | 授权失败写 `warn` 日志（flow id + 错误文本，不含凭据） |
+| `docs/WEB_ADMIN.md` §7、`docs/DEPLOYMENT.md` §12、`config.example.toml` | 说明必须保持回环回调，局域网浏览器改用粘贴模式 |
+| `src/admin/tests.rs` | 新增 2 个测试：粘贴完整 URL 与裸 code 均成功、且同一身份不重复建号；无 `code` 参数的 URL 返回 400 且流程保持 pending |
+
+### 48.4 验证
+
+```text
+$ cargo fmt --all -- --check                              （exit 0）
+$ cargo clippy --workspace --all-targets -- -D warnings   （0 warnings）
+$ cargo test --workspace                                  650 passed
+```
+
+路由器（重新部署 2026-10-30 10:58）：`/admin/static/app.js` 含 `pasteCallback`；
+`POST /admin/api/auth/codearts/<id>/complete` 未登录返回 401（路由已挂载）；
+`GET /admin/api/bootstrap` 的 `oauth_callback_url` 回到 `http://127.0.0.1:8787/oauth/callback`；
+`/v1/models` 仍为 11 个。
+
+### 48.5 未验证
+
+真实账号的粘贴授权未执行（需要操作者完成一次华为登录）；STS 拒绝的具体
+`error_description` 已能透出，但本次没有触发新的失败。

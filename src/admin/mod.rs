@@ -294,6 +294,10 @@ pub fn router(state: AdminState) -> Router {
             get(api::codearts_flow_status),
         )
         .route(
+            "/admin/api/auth/codearts/{flow_id}/complete",
+            post(api::complete_codearts_auth),
+        )
+        .route(
             "/admin/api/auth/codearts/{flow_id}/cancel",
             post(api::cancel_codearts_flow),
         )

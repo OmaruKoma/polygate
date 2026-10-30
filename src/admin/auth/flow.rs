@@ -125,6 +125,52 @@ impl AdminState {
                     "no pending CodeArts authorization; start a new login",
                 )
             })?;
+        self.finish_codearts_flow(flow, code, now).await
+    }
+
+    /// Complete a named pending flow from a pasted callback URL.
+    ///
+    /// CodeArts binds the authorization code to a loopback callback, so a
+    /// browser on another machine never reaches the gateway. The operator
+    /// copies the address bar instead and the exchange happens here.
+    pub async fn complete_codearts_flow(
+        &self,
+        flow_id: &str,
+        raw: &str,
+    ) -> Result<FlowView, GatewayError> {
+        let now = Utc::now();
+        self.storage.admin().expire_flows(now).await?;
+        let flow = self.storage.admin().flow(flow_id).await?.ok_or_else(|| {
+            GatewayError::new(ErrorKind::BadRequest, "authorization flow not found")
+        })?;
+        if flow.kind != "codearts" {
+            return Err(GatewayError::new(
+                ErrorKind::BadRequest,
+                "authorization flow is not a CodeArts login",
+            ));
+        }
+        if flow.status != "pending" {
+            return Err(GatewayError::new(
+                ErrorKind::BadRequest,
+                "authorization flow is no longer pending",
+            ));
+        }
+        if flow.expires_at <= now {
+            return Err(GatewayError::new(
+                ErrorKind::BadRequest,
+                "authorization flow has expired; start a new login",
+            ));
+        }
+        let code = code_from_callback(raw)?;
+        self.finish_codearts_flow(flow, &code, now).await
+    }
+
+    async fn finish_codearts_flow(
+        &self,
+        flow: AuthFlowRow,
+        code: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<FlowView, GatewayError> {
         if !self.storage.admin().claim_flow(&flow.id, now).await? {
             return Err(GatewayError::new(
                 ErrorKind::BadRequest,
@@ -158,6 +204,7 @@ impl AdminState {
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
+                tracing::warn!(flow = %flow.id, error = %error.message, "CodeArts authorization failed");
                 let _ = self
                     .storage
                     .admin()
@@ -249,6 +296,44 @@ pub(super) fn view(flow: &AuthFlowRow) -> FlowView {
         account_id: flow.account_id.clone(),
         error: flow.error.clone(),
     }
+}
+
+/// Accept either a full callback URL or a bare code from the operator.
+fn code_from_callback(raw: &str) -> Result<String, GatewayError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err(GatewayError::new(
+            ErrorKind::BadRequest,
+            "paste the callback URL from the browser address bar",
+        ));
+    }
+    let candidate = if raw.starts_with("http://") || raw.starts_with("https://") {
+        let url = url::Url::parse(raw).map_err(|_| {
+            GatewayError::new(
+                ErrorKind::BadRequest,
+                "the pasted callback URL is not valid",
+            )
+        })?;
+        url.query_pairs()
+            .find(|(key, _)| key == "code")
+            .map(|(_, value)| value.into_owned())
+            .ok_or_else(|| {
+                GatewayError::new(
+                    ErrorKind::BadRequest,
+                    "the pasted URL has no `code` parameter",
+                )
+            })?
+    } else {
+        raw.to_string()
+    };
+    let candidate = candidate.trim().to_string();
+    if candidate.is_empty() || candidate.len() > 4096 {
+        return Err(GatewayError::new(
+            ErrorKind::BadRequest,
+            "the pasted value is not a usable authorization code",
+        ));
+    }
+    Ok(candidate)
 }
 
 pub(super) fn flow_aad(flow_id: &str) -> Vec<u8> {

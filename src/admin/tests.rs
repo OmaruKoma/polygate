@@ -623,6 +623,80 @@ async fn failed_authorization_creates_no_account() {
 }
 
 #[tokio::test]
+async fn codearts_paste_completes_a_flow_for_a_remote_browser() {
+    let upstream = sts_server().await;
+    let harness = harness(&upstream.base_url, 600).await;
+    let (session, _) = setup(&harness.app).await;
+
+    let flow = start_flow(&harness.app, &session, "cn", "Remote").await;
+    let flow_id = flow["flow_id"].as_str().unwrap().to_string();
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        &format!("/admin/api/auth/codearts/{flow_id}/complete"),
+        Some(json!({
+            "url": "http://127.0.0.1:8787/oauth/callback?code=good-code&state=opaque"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "succeeded");
+    assert!(body["account_id"].as_str().is_some());
+
+    // A bare code is accepted too.
+    let flow = start_flow(&harness.app, &session, "cn", "Remote bare").await;
+    let flow_id = flow["flow_id"].as_str().unwrap().to_string();
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        &format!("/admin/api/auth/codearts/{flow_id}/complete"),
+        Some(json!({"url": "good-code"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "succeeded");
+
+    let (_, body) = authed_get(&harness.app, &session, "/admin/api/accounts").await;
+    assert_eq!(body["count"], 1, "same identity must not duplicate");
+}
+
+#[tokio::test]
+async fn codearts_paste_rejects_a_url_without_a_code() {
+    let upstream = sts_server().await;
+    let harness = harness(&upstream.base_url, 600).await;
+    let (session, _) = setup(&harness.app).await;
+    let flow = start_flow(&harness.app, &session, "cn", "No code").await;
+    let flow_id = flow["flow_id"].as_str().unwrap().to_string();
+
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        &format!("/admin/api/auth/codearts/{flow_id}/complete"),
+        Some(json!({"url": "http://127.0.0.1:8787/oauth/callback?state=only"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("code"));
+
+    let (_, body) = authed_get(
+        &harness.app,
+        &session,
+        &format!("/admin/api/auth/codearts/{flow_id}"),
+    )
+    .await;
+    assert_eq!(
+        body["status"], "pending",
+        "a bad paste must not burn the flow"
+    );
+}
+
+#[tokio::test]
 async fn authorization_can_be_cancelled_and_expires() {
     let upstream = sts_server().await;
     let harness = harness(&upstream.base_url, 1).await;

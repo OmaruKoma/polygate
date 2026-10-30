@@ -26,6 +26,7 @@ use super::signer::{sign_request, SignCredential};
 const TOKEN_PATH: &str = "/v1/oauth2/tokens";
 const IDENTITY_PATH: &str = "/v5/caller-identity";
 const MAX_ERROR_CODE: usize = 64;
+const MAX_ERROR_DESCRIPTION: usize = 160;
 
 /// Parameters copied from the source implementation's configuration.
 #[derive(Debug, Clone)]
@@ -363,10 +364,34 @@ fn map_token_status(status: u16, body: &str) -> GatewayError {
             "CodeArts token endpoint failed with HTTP {status}"
         )),
         _ => {
-            let detail = code.map(|code| format!(" ({code})")).unwrap_or_default();
+            let detail = match (code, error_description(body)) {
+                (Some(code), Some(desc)) => format!(" ({code}: {desc})"),
+                (Some(code), None) => format!(" ({code})"),
+                (None, Some(desc)) => format!(" ({desc})"),
+                (None, None) => String::new(),
+            };
             GatewayError::auth_invalid(format!("CodeArts authorization was rejected{detail}"))
         }
     }
+}
+
+/// Human-readable reason the token endpoint gave, when it sends one.
+///
+/// The authorization code itself is never part of an error body, so echoing the
+/// description to the administrator is safe and is the only way to tell an
+/// expired code from a `redirect_uri` mismatch or a PKCE failure.
+fn error_description(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let text = ["error_description", "error_msg", "message"]
+        .iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))?;
+    let cleaned: String = text
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(MAX_ERROR_DESCRIPTION)
+        .collect();
+    let cleaned = cleaned.trim();
+    (!cleaned.is_empty()).then(|| cleaned.to_string())
 }
 
 fn error_code(body: &str) -> Option<String> {
@@ -387,6 +412,26 @@ fn error_code(body: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::config::Region;
+
+    #[test]
+    fn token_rejection_keeps_the_upstream_description() {
+        let body =
+            r#"{"error":"STS5.1805","error_description":"The authorization code is invalid."}"#;
+        let error = map_token_status(400, body);
+        assert_eq!(error.kind, crate::error::ErrorKind::AuthInvalid);
+        assert!(error.message.contains("STS5.1805"), "{}", error.message);
+        assert!(
+            error.message.contains("authorization code is invalid"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn token_rejection_without_body_stays_generic() {
+        let error = map_token_status(400, "");
+        assert!(error.message.ends_with("rejected"), "{}", error.message);
+    }
 
     fn config() -> LoginConfig {
         LoginConfig {

@@ -1094,6 +1094,26 @@ pub struct CompleteTraeRequest {
     pub url: String,
 }
 
+#[derive(Deserialize)]
+pub struct CompleteCodeartsRequest {
+    /// The full callback URL copied from the browser address bar, or the code.
+    pub url: String,
+}
+
+pub async fn complete_codearts_auth(
+    State(state): State<AdminState>,
+    Path(flow_id): Path<String>,
+    Json(request): Json<CompleteCodeartsRequest>,
+) -> Response {
+    match state
+        .complete_codearts_flow(&flow_id, request.url.trim())
+        .await
+    {
+        Ok(view) => json_ok(serde_json::to_value(view).unwrap_or(Value::Null)),
+        Err(error) => json_error(&error),
+    }
+}
+
 pub async fn complete_trae_auth(
     State(state): State<AdminState>,
     Path(flow_id): Path<String>,

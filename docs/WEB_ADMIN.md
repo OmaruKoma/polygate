@@ -184,15 +184,18 @@ HTTPS/反向代理：默认只监听 `127.0.0.1`。公网部署必须置于 TLS 
 `server.public_url`（或 `trust_proxy = true` 并正确传递 `X-Forwarded-Proto`），并把
 `redirect_url` 配成外部可访问的 HTTPS 地址。
 
-**局域网访问**（例如路由器上的 `listen = "10.0.0.1:8787"`）：默认回调是 `127.0.0.1`，
-浏览器在别的机器上会打不开，必须显式指定：
+**局域网访问**（例如路由器上的 `listen = "10.0.0.1:8787"`）：CodeArts 把授权 code 绑定在
+**回环回调**上，把 `redirect_url` 改成 `http://10.0.0.1:8787/oauth/callback` 会让 STS 在换取
+token 时返回 `STS5.1805`。正确做法是保持默认的 `127.0.0.1` 回调，浏览器回调页打不开时用
+面板里的**粘贴框**完成授权：
 
-```toml
-[admin]
-redirect_url = "http://10.0.0.1:8787/oauth/callback"
-```
+1. 面板「账号管理 → CodeArts → 授权」，弹窗打开华为授权页并完成登录；
+2. 浏览器跳到 `http://127.0.0.1:8787/oauth/callback?code=...`（可能显示无法访问）；
+3. 复制地址栏完整链接，粘贴回面板的「回调链接」输入框，点「完成授权」。
 
-当前生效值可以在未登录的 `GET /admin/api/bootstrap` 里看到（`oauth_callback_url`）。
+网关会用该流程保存的 PKCE verifier 与 DPoP 私钥在服务端完成换取，浏览器不需要能访问回调地址。
+同样的粘贴模式也用于 TRAE。当前生效值可以在未登录的 `GET /admin/api/bootstrap` 里看到
+（`oauth_callback_url`）。
 
 ## 8. 前端
 
