@@ -4429,3 +4429,49 @@ $ cargo test --workspace                                  650 passed
 
 真实账号的粘贴授权未执行（需要操作者完成一次华为登录）；STS 拒绝的具体
 `error_description` 已能透出，但本次没有触发新的失败。
+
+## 49. WorkBuddy Intl 授权失败：扁平账户结构与客户端身份（2026-10-30，完成）
+
+### 49.1 现象
+
+面板里 WorkBuddy 国际版登录完成后被弹回登录界面。不是崩溃：路由器进程自 10:58:15 起
+未重启，`logread` 无 panic/error。数据库 `admin_auth_flows` 给出真实原因：
+
+| 时间（UTC） | region | 状态 | 错误 |
+| --- | --- | --- | --- |
+| 02:50:16 | intl | failed | `WorkBuddy authorization did not identify a user` |
+| 03:00:30 | intl | failed | 同上 |
+| 03:01:04 | intl | failed | 同上 |
+
+### 49.2 原因（两处）
+
+1. `GET /v2/plugin/login/account` 在 Intl 返回**扁平**结构 `data:{uid, enterpriseId, nickname}`，
+   而 CN 返回 `data.account.{uid,...}`（`docs/WORKBUDDY_MIGRATION.md` §169-170 已记录两种形态）。
+   `build_credential` 只读 `data.account.uid`，回退也只看 token 的 `user_id`，于是 uid 为空，
+   流程被判 `AuthInvalid` 并终止 —— 表现为“登录后回到登录界面”。
+2. 管理台的授权客户端（`WorkbuddyAuthClient::new`）始终使用 honest 头，未读取
+   `client.identity`；按 §43 的结论，Intl 门户要求官方客户端头族。
+
+### 49.3 变更
+
+| 文件 | 变更 |
+| --- | --- |
+| `src/providers/workbuddy/auth.rs` | `build_credential` 同时接受 `data.account.uid` 与 `data.uid`（`enterpriseId` 同理）；uid 缺失时错误信息附带**字段名**（不含值）便于定位上游结构变化；新增 1 个 Intl 扁平结构测试 |
+| `src/admin/mod.rs` | 从 provider `options` 读取 `client.identity`，注入 `WorkbuddyAuthClient`（任一 WorkBuddy provider 配置即生效） |
+| 路由器 `config.toml` | 增加 `kind = "workbuddy"`、`region = "intl"`、`"client.identity" = "impersonate"`（备份 `config.toml.bak3-20261030`） |
+
+### 49.4 验证
+
+```text
+$ cargo fmt --all -- --check                              （exit 0）
+$ cargo clippy --workspace --all-targets -- -D warnings   （0 warnings）
+$ cargo test --workspace                                  651 passed
+```
+
+路由器新二进制（11:08 启动）：`/health` 200；`/v1/models` 22 个
+（CodeArts 10 + Qoder 11 + mock 1，Qoder CN 账号 `edufx` 已在此前授权成功）。
+
+### 49.5 未验证
+
+真实 WorkBuddy Intl 登录未完成（需操作者在官方页面授权）。若仍失败，错误里会带
+`fields: ...` 暴露上游返回的字段名，据此再对齐结构。

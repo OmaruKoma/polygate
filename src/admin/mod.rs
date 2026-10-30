@@ -39,6 +39,7 @@ use crate::checkin::CheckinService;
 use crate::config::Config;
 use crate::error::GatewayError;
 use crate::providers::codearts::login::LoginConfig;
+use crate::providers::profile::Identity;
 use crate::providers::qoder::auth::QoderAuthClient;
 use crate::providers::trae::auth::TraeAuthClient;
 use crate::providers::workbuddy::auth::WorkbuddyAuthClient;
@@ -208,7 +209,18 @@ impl AdminState {
         );
         let http = reqwest::Client::new();
         let qoder_auth = QoderAuthClient::new(http.clone());
-        let workbuddy_auth = WorkbuddyAuthClient::new(http.clone());
+        // The Intl portal rejects requests that lack the official client's
+        // header family, so the admin authorization client follows the
+        // provider option instead of always sending honest headers.
+        let workbuddy_identity = config
+            .providers
+            .iter()
+            .filter(|provider| matches!(provider.kind, crate::config::ProviderKind::Workbuddy))
+            .filter_map(|provider| provider.options.get("client.identity"))
+            .find_map(|raw| raw.trim().parse::<Identity>().ok())
+            .unwrap_or_default();
+        let workbuddy_auth =
+            WorkbuddyAuthClient::new(http.clone()).with_identity(workbuddy_identity);
         let trae_auth = TraeAuthClient::new(http.clone());
         Self {
             storage,

@@ -300,21 +300,43 @@ fn build_credential(
     access_token: &str,
     now: i64,
 ) -> Result<WorkbuddyCredential, GatewayError> {
+    // `login/account` returns `data.account.uid` on CN and a flat `data.uid`
+    // on Intl; accept both before falling back to the token payload.
     let account = account_data
         .get("account")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let uid = text(account.get("uid"));
+    let field = |key: &str| -> String {
+        let nested = text(account.get(key));
+        if !nested.is_empty() {
+            nested
+        } else {
+            text(account_data.get(key))
+        }
+    };
+    let uid = field("uid");
     let uid = if uid.is_empty() {
         text(token.get("user_id"))
     } else {
         uid
     };
     if uid.is_empty() {
-        return Err(GatewayError::auth_invalid(
-            "WorkBuddy authorization did not identify a user",
-        ));
+        // Name the fields we did see (never their values) so an upstream shape
+        // change is diagnosable without dumping the payload.
+        let mut fields: Vec<String> = account_data
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
+        fields.sort();
+        let hint = if fields.is_empty() {
+            String::new()
+        } else {
+            format!(" (fields: {})", fields.join(", "))
+        };
+        return Err(GatewayError::auth_invalid(format!(
+            "WorkBuddy authorization did not identify a user{hint}"
+        )));
     }
     let realm = region::realm(region);
     let domain = {
@@ -332,7 +354,7 @@ fn build_credential(
     let enterprise_id = {
         let candidate = text(token.get("enterprise_id"));
         if candidate.is_empty() {
-            text(account.get("enterpriseId"))
+            field("enterpriseId")
         } else {
             candidate
         }
@@ -497,6 +519,44 @@ mod tests {
         assert_eq!(credential.domain, "www.codebuddy.cn");
         assert_eq!(credential.expires_at, 4_600);
         assert_eq!(credential.refresh_token, "r-1");
+    }
+
+    #[tokio::test]
+    async fn an_intl_account_with_a_flat_payload_still_yields_a_uid() {
+        // Intl's `login/account` returns `data.uid` at the top level instead of
+        // `data.account.uid`; both shapes must produce a usable credential.
+        let server = spawn_server(|request| {
+            match request.path() {
+            TOKEN => Reply::json(
+                200,
+                json!({"code":0,"data":{
+                    "accessToken":"a-1",
+                    "refreshToken":"r-1",
+                    "domain":"www.workbuddy.ai",
+                    "expires_in":3600
+                }})
+                .to_string(),
+            ),
+            ACCOUNT => Reply::json(
+                200,
+                json!({"code":0,"data":{"uid":"uid-intl","enterpriseId":"ent-intl","nickname":"N"}})
+                    .to_string(),
+            ),
+            _ => Reply::json(404, "{}"),
+        }
+        })
+        .await;
+        let client = WorkbuddyAuthClient::with_base(reqwest::Client::new(), &server.base_url);
+        let outcome = client
+            .poll(Region::Intl, "s-1", 2_000, 1_000)
+            .await
+            .unwrap();
+        let WorkbuddyPollOutcome::Completed(credential) = outcome else {
+            panic!("expected completion");
+        };
+        assert_eq!(credential.uid, "uid-intl");
+        assert_eq!(credential.enterprise_id, "ent-intl");
+        assert_eq!(credential.domain, "www.workbuddy.ai");
     }
 
     #[tokio::test]

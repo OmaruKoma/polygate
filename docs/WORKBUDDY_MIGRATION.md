@@ -665,3 +665,13 @@ PolyGate 的 `classify_session_failure` 已能把 `ChannelRestricted/AuthExpired
 workbuddy2api 与 Coding2API 均为 MIT；dsh-wtq-pool 为 MIT。本文只吸收协议事实并独立实现，
 未复制其受保护代码。若 M14-B 复用任何代码片段，必须在 `NOTICE`/`LICENSE` 中保留原版权声明。
 `AGENTS.md` §1 仍要求发布前完成全部依赖与来源清点。
+
+## 14. 登录账户接口的两种结构（2026-10-30 更新）
+
+`GET /v2/plugin/login/account?state=` 的 `data` 有两种形态：
+
+- CN：`data.account.{uid, nickname, enterpriseId}`
+- Intl：`data.{uid, enterpriseId, nickname}`（扁平）
+
+PolyGate 两种都接受；uid 缺失时错误信息会列出实际返回的字段名（不含值）。Intl 的插件授权
+还要求官方客户端头族，管理台授权客户端会按 provider 的 `client.identity` 注入。
