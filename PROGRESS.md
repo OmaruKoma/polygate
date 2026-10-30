@@ -5033,3 +5033,21 @@ VmSize 36,636 kB   VmData 26,556 kB   Threads 8
 重写 `README.md`：目录、截图区、特性分组、9 Provider 状态表与状态词表、
 快速开始、客户端接入（Claude Code / Codex / Cursor / Cline / Continue）、
 架构图、软路由与 Windows 两组占用数据、部署、安全默认值、已知限制、文档索引。
+
+## 59. CodeArts Intl 实机复测（2026-10-30，完成）
+
+启动日志显示 Intl 账号的 STS 安全令牌过期（`APIG.0602`），目录发现失败；
+重启网关后 STS 已续期，Intl 目录返回 **2 个模型**：`GLM-5.1`、`GLM-5.2`。
+
+```text
+GET  /v1/models                          → GLM-5.1, GLM-5.2（owned_by=codearts-intl）
+POST /v1/chat/completions codearts-intl::GLM-5.2
+     → 200，5.5 s，reasoning_content + content，usage 23/56/79
+POST 同上 stream=true                    → SSE，reasoning_content 增量正常
+POST /admin/api/accounts/{id}/quota      → unknown（"statistics response has no credit total metric"）
+签到                                      → 上游拒绝 TM.00001005（账号权益问题）
+```
+
+结论：Intl 的协议、签名、模型发现、对话与 SSE 与 CN 一致，差异只在账号权益与模型集合。
+与 CN 对比：CN 目录 10 个模型，Intl 只有 2 个；`deepseek-v4.1-flash` 等 CN 模型在 Intl
+返回 `inferhub.002002009.404 model is not registered`。

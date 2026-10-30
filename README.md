@@ -113,13 +113,14 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | 已用真实账号确认的项 | Provider |
 | --- | --- |
 | 授权 | CodeArts CN/Intl、Qoder CN/Intl、WorkBuddy CN/Intl、Loomy、OfficeAce |
-| 模型目录 | CodeArts CN（10）、Qoder CN/Intl（11/15）、WorkBuddy CN/Intl（15/23）、Loomy（10）、OfficeAce（24） |
+| 模型目录 | CodeArts CN（10）/Intl（2）、Qoder CN/Intl（11/15）、WorkBuddy CN/Intl（15/23）、Loomy（10）、OfficeAce（24） |
 | 对话（网关日志 200） | CodeArts CN、WorkBuddy CN（含 SSE）、Loomy |
 | 额度 | CodeArts CN、Qoder CN、Loomy、OfficeAce |
 | 每日签到 | Qoder CN/Intl（+100 credits）、WorkBuddy CN（+100 credits） |
 
-CodeArts Intl 的授权成功但目录发现为 0，签到被上游额度策略拒绝（`TM.00001005`），
-属于上游账号状态，不是协议问题。
+CodeArts Intl 只暴露 `GLM-5.1`、`GLM-5.2` 两个模型（CN 同账号有 10 个），对话与 SSE 均已实测；
+签到被上游额度策略拒绝（`TM.00001005`），额度接口不返回 credit 总量，属于账号权益问题，
+不是协议问题。
 
 状态含义：
 
