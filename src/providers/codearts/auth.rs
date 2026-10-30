@@ -28,7 +28,7 @@ use crate::error::{ErrorKind, GatewayError};
 /// actually expires so an in-flight request is not rejected mid-stream.
 pub const REFRESH_SKEW: Duration = Duration::seconds(60);
 
-const CLIENT_ID: &str = "codearts-agent";
+const DEFAULT_CLIENT_ID: &str = "codearts-snap";
 const TOKEN_PATH: &str = "/v1/oauth2/tokens";
 
 /// Decoded view of one CodeArts credential JSON object.
@@ -38,6 +38,9 @@ pub struct CodeArtsCredential {
     pub security_token: Zeroizing<String>,
     pub domain_id: String,
     pub expiration: Option<DateTime<Utc>>,
+    /// OAuth client that issued the refresh token. Must match at refresh time;
+    /// credentials written before this field existed fall back to the default.
+    pub client_id: Option<String>,
     pub refresh_token: Option<Zeroizing<String>>,
     pub code_verifier: Option<Zeroizing<String>>,
     pub dpop: Option<DpopKey>,
@@ -87,6 +90,11 @@ impl CodeArtsCredential {
             .get("refresh_token")
             .filter(|value| !value.trim().is_empty())
             .map(|value| Zeroizing::new(value.to_string()));
+        let client_id = credential
+            .get("client_id")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         let code_verifier = credential
             .get("code_verifier")
             .filter(|value| !value.trim().is_empty())
@@ -98,6 +106,7 @@ impl CodeArtsCredential {
             security_token,
             domain_id,
             expiration,
+            client_id,
             refresh_token,
             code_verifier,
             dpop,
@@ -147,7 +156,12 @@ impl CodeArtsCredential {
         let proof = dpop.proof(&token_url, now)?;
 
         let mut form = vec![
-            ("client_id", CLIENT_ID.to_string()),
+            (
+                "client_id",
+                self.client_id
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_CLIENT_ID.to_string()),
+            ),
             ("grant_type", "refresh_token".to_string()),
             ("refresh_token", refresh_token.to_string()),
         ];
@@ -369,6 +383,26 @@ mod tests {
         let debug = format!("{credential:?}");
         assert!(!debug.contains("sk"));
         assert!(!debug.contains("sts"));
+    }
+
+    #[test]
+    fn the_login_client_id_is_kept_for_refresh() {
+        let mut value = credential_json(None);
+        assert_eq!(
+            CodeArtsCredential::parse(&Credential::from_value(value.clone()))
+                .expect("cred")
+                .client_id,
+            None,
+            "legacy credentials fall back to the default client id"
+        );
+        value["client_id"] = json!("custom-snap");
+        assert_eq!(
+            CodeArtsCredential::parse(&Credential::from_value(value))
+                .expect("cred")
+                .client_id
+                .as_deref(),
+            Some("custom-snap")
+        );
     }
 
     #[test]

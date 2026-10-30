@@ -242,6 +242,7 @@ pub async fn exchange(
         "secret_access_key": secret_access_key.as_str(),
         "security_token": security_token.as_str(),
         "domain_id": identity.account_id,
+        "client_id": config.client_id,
         "code_verifier": secrets.code_verifier.clone(),
         "dpop_private_jwk": secrets.dpop_private_jwk.clone(),
     });
