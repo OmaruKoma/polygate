@@ -60,6 +60,20 @@
       cnLoginOnly: true,
       regionHint: "Loomy 只有中国站一个部署，站点固定为 CN。",
     },
+    officeace: {
+      label: "OfficeAce",
+      authPath: "officeace",
+      siteNote:
+        "将打开华为云官方授权页面。回调由云端承接，PolyGate 只保存授权返回的聊天密钥与临时 AK/SK，不接触账号密码，也不修改任何设备标识。",
+      startLabel: "打开授权页面",
+      successToast: "OfficeAce 账号授权成功",
+      supportsCheckin: true,
+      pollInterval: 2500,
+      cnLoginOnly: true,
+      switchAccount: true,
+      regionHint: "OfficeAce 只有中国站（cn-southwest-2）一个部署。",
+      autoCheckNote: "等待在华为云页面完成授权，本页面会自动检查结果…",
+    },
     trae: {
       label: "TRAE",
       authPath: "trae",
@@ -541,6 +555,9 @@
              <label>deviceId（32 位十六进制）<input id="flow-device" maxlength="32" spellcheck="false" placeholder="与登录浏览器一致的 deviceId"></label>
              <p class="hint">PolyGate 不会生成设备标识，也不会修改浏览器指纹；这两个值只随该账号凭据保存。</p>`
           : ""}
+        ${provider.switchAccount
+          ? `<label class="check"><input type="checkbox" id="flow-switch"> 先退出当前华为云会话（添加另一个账号时勾选，否则会直接复用浏览器里的账号）</label>`
+          : ""}
         <label>账号名称（可选）<input id="flow-name" maxlength="64" placeholder="例如：主账号"></label>
         <div id="flow-status" class="muted"></div>`,
       actions: [
@@ -604,6 +621,10 @@
       }
       body.machine_id = machine;
       body.device_id = device;
+    }
+    if (provider.switchAccount) {
+      const toggle = $("#flow-switch", modal);
+      body.switch_account = Boolean(toggle && toggle.checked);
     }
     status.textContent = "正在创建授权流程…";
     const popup = window.open("about:blank", `polygate-${provider.authPath}-auth`, "width=560,height=760");
@@ -903,16 +924,22 @@
         : `<div class="empty"><strong>尚无别名</strong>建立别名后可以按优先级/权重在多个 Provider 之间路由。</div>`}
       <div class="section-head"><h2>原生模型</h2><span class="muted">启动时从已启用 Provider 发现</span></div>
       ${native.length
-        ? `<div class="table-wrap"><table><thead><tr><th>模型 ID</th><th>Provider</th><th>Region</th><th>上下文</th><th>可用</th></tr></thead><tbody>
-          ${native
+        ? `<div class="table-wrap"><table><thead><tr><th>模型 ID</th><th>上下文</th><th>可用</th></tr></thead><tbody>
+          ${nativeGroups(native)
             .map(
-              (model) => `<tr>
-                <td><span class="strong">${esc(model.id)}</span><div class="tiny">${esc(model.display_name || "")}</div></td>
-                <td>${esc(model.provider)}<div class="tiny">${esc(model.kind)}</div></td>
-                <td>${regionLabel(model.region)}</td>
-                <td>${model.context_window ? formatTokens(model.context_window) : "—"}</td>
-                <td>${model.available ? '<span class="badge ok">可用</span>' : '<span class="badge muted">不可用</span>'}</td>
-              </tr>`,
+              (group) => `<tr class="group-row"><td colspan="3">
+                  <span class="strong">${esc(group.provider)}</span>
+                  <span class="tiny">${esc(group.kind)} · ${esc(String(group.region || "").toUpperCase())} · ${group.models.length} 个模型</span>
+                </td></tr>
+                ${group.models
+                  .map(
+                    (model) => `<tr>
+                      <td><span class="strong">${esc(model.id)}</span><div class="tiny">${esc(model.display_name || "")}</div></td>
+                      <td>${model.context_window ? formatTokens(model.context_window) : "—"}</td>
+                      <td>${model.available ? '<span class="badge ok">可用</span>' : '<span class="badge muted">不可用</span>'}</td>
+                    </tr>`,
+                  )
+                  .join("")}`,
             )
             .join("")}
         </tbody></table></div>`
@@ -960,6 +987,26 @@
         if (target) openModelEdit(target);
       }),
     );
+  }
+
+  // The API returns native models already sorted by provider; collapse
+  // consecutive entries so the table shows one header per upstream.
+  function nativeGroups(native) {
+    const groups = [];
+    for (const model of native) {
+      const last = groups[groups.length - 1];
+      if (last && last.provider === model.provider) {
+        last.models.push(model);
+      } else {
+        groups.push({
+          provider: model.provider,
+          kind: model.kind,
+          region: model.region,
+          models: [model],
+        });
+      }
+    }
+    return groups;
   }
 
   function capabilityBadges(caps) {
@@ -1208,6 +1255,9 @@
 
   async function renderSettings(container) {
     const bootstrap = state.bootstrap || {};
+    const providers = await api("/admin/api/providers")
+      .then((data) => data.items || [])
+      .catch(() => []);
     container.innerHTML = `
       <div class="grid two">
         <div class="card">
@@ -1226,11 +1276,56 @@
         </div>
       </div>
       <div class="card">
-        <h2>接入状态</h2>
-        <p class="muted">CodeArts 具备真实 Adapter，可授权并参与模型发现、对话与签到。</p>
-        <p class="muted">Qoder 已注册为 Provider：设备码授权、模型发现、额度、对话/流式/工具调用与签到均已实现；CN 账号已验证授权、模型、额度、签到与对话。</p>
-        <p class="muted">TRAE 与 WorkBuddy 已接入授权、额度、签到与对话/流式/工具调用，均只做 Mock 验证，尚无真实账号实测；TRAE 授权需要你自行提供 machineId / deviceId。</p>
+        <div class="section-head">
+          <h2>接入状态</h2>
+          <span class="muted">${providers.length} 个 Provider 已注册</span>
+        </div>
+        ${providers.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Provider</th><th>验证</th><th>能力</th><th>账号</th><th>状态</th></tr></thead><tbody>
+            ${providers.map(providerRow).join("")}
+          </tbody></table></div>
+          <p class="hint">「已实测」= 用真实账号端到端验证过；「实验性」= 协议已实现，仅有 Mock 或部分实测；「未验证」= 无可用账号。额度未知时显示「未知」，不会写成 0。</p>`
+          : `<div class="empty"><strong>没有已注册的 Provider</strong>在 config.toml 中添加并重启网关。</div>`}
       </div>`;
+  }
+
+  function providerRow(provider) {
+    const region = String(provider.region || "").toUpperCase();
+    return `<tr>
+      <td><span class="strong">${esc(provider.display_name || provider.id)}</span>
+        <div class="tiny">${esc(provider.kind || "")} · ${esc(region || "—")}</div></td>
+      <td>${verificationBadge(provider.verification)}</td>
+      <td>${capabilityChips(provider.capabilities)}</td>
+      <td class="tiny">${provider.credential_count || 0} / ${provider.account_count || 0} 有凭据</td>
+      <td>${provider.enabled ? '<span class="badge ok">启用</span>' : '<span class="badge muted">停用</span>'}</td>
+    </tr>`;
+  }
+
+  function verificationBadge(verification) {
+    const map = {
+      verified: ["已实测", "ok"],
+      experimental: ["实验性", "warn"],
+      unavailable: ["未验证", "muted"],
+      unsupported: ["不支持", "bad"],
+      mock: ["Mock", "muted"],
+    };
+    const [label, tone] = map[verification] || [verification || "—", "muted"];
+    return `<span class="badge ${tone}">${esc(label)}</span>`;
+  }
+
+  function capabilityChips(capabilities) {
+    if (!capabilities) return `<span class="tiny">—</span>`;
+    const labels = [
+      ["authentication", "授权"],
+      ["model_discovery", "模型"],
+      ["quota", "额度"],
+      ["chat", "对话"],
+      ["streaming", "流式"],
+      ["tool_calling", "工具"],
+    ];
+    return `<div class="caps">${labels
+      .map(([key, label]) => `<span class="cap ${capabilities[key] ? "" : "off"}">${label}</span>`)
+      .join("")}</div>`;
   }
 
   // ---------------------------------------------------------------- helpers

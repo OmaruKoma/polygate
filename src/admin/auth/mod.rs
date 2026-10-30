@@ -27,6 +27,7 @@ use crate::error::{ErrorKind, GatewayError};
 use crate::security::{generate_token, hash_token, verify_token};
 
 mod flow;
+mod officeace;
 mod qoder;
 mod trae;
 mod workbuddy;

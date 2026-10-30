@@ -17,6 +17,7 @@
 mod codearts;
 mod executor;
 mod model;
+mod officeace;
 mod qoder;
 mod quota;
 mod scheduler;
@@ -38,6 +39,7 @@ pub use model::{
     CheckinResult, CheckinRetryMode, CheckinSchedule, CheckinStatus, Clock, QuotaRefreshOutcome,
     SystemClock, BATCH_CONCURRENCY, DEFAULT_LEASE_SECS, DEFAULT_TICK_SECS, MAX_BATCH_ACCOUNTS,
 };
+pub use officeace::OfficeAceCheckinExecutor;
 pub use qoder::QoderCheckinExecutor;
 pub use quota::{MockQuotaRefreshHook, QuotaRefreshHook, QuotaRefreshRequest};
 pub use scheduler::{CheckinScheduler, Sleeper, TokioSleeper};

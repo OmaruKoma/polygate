@@ -18,14 +18,14 @@
 //! Verification state is `experimental` until a real account has been exercised
 //! end to end. Nothing in this module claims that has happened.
 
-mod auth;
+pub(crate) mod auth;
 mod client;
 mod convert;
 mod error;
 pub mod login;
 mod models;
 mod quota;
-mod signer;
+pub(crate) mod signer;
 
 #[cfg(test)]
 mod tests;

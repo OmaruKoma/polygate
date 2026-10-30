@@ -29,8 +29,8 @@ use crate::admin::{self, AdminState};
 use crate::api::{self, ApiKeyAuth, ApiState, ModelCatalog};
 use crate::checkin::{
     CheckinExecutor, CheckinScheduler, CheckinService, CodeArtsCheckinExecutor,
-    MockCheckinExecutor, QoderCheckinExecutor, QuotaRefreshHook, QuotaRefreshRequest,
-    RoutingCheckinExecutor, TraeCheckinExecutor, WorkbuddyCheckinExecutor,
+    MockCheckinExecutor, OfficeAceCheckinExecutor, QoderCheckinExecutor, QuotaRefreshHook,
+    QuotaRefreshRequest, RoutingCheckinExecutor, TraeCheckinExecutor, WorkbuddyCheckinExecutor,
 };
 use crate::config::{Config, ProviderConfig, ProviderKind, Region};
 use crate::error::{ErrorKind, GatewayError};
@@ -38,8 +38,8 @@ use crate::providers::profile::Identity;
 use crate::providers::qoder::provider::QoderProvider;
 use crate::providers::{
     ClientHeaders, CodeArtsHttp, CodeArtsProvider, LoomyProvider, MockConfig, MockProvider,
-    MockReply, MockToolCall, ProviderKey, ProviderRegistry, TraeProvider, UpstreamModel,
-    WorkbuddyProvider,
+    MockReply, MockToolCall, OfficeAceProvider, ProviderKey, ProviderRegistry, TraeProvider,
+    UpstreamModel, WorkbuddyProvider,
 };
 use crate::quota::QuotaSnapshot;
 use crate::security::SecretBox;
@@ -315,6 +315,31 @@ fn build_registry(
                 };
                 registry.register(Arc::new(loomy))?;
             }
+            ProviderKind::Officeace => {
+                // One deployment (`cn-southwest-2`); an `intl` entry would need
+                // endpoints that do not exist, so it is a configuration error.
+                if !crate::providers::officeace::region::supported(provider.region) {
+                    return Err(GatewayError::config(
+                        "provider officeace has no international deployment; use region = \"cn\"",
+                    ));
+                }
+                let cloud = option(provider, "cloud_url")
+                    .unwrap_or_else(|| crate::providers::officeace::region::CLOUD_HOST.into());
+                let sts = option(provider, "sts_url")
+                    .unwrap_or_else(|| crate::providers::officeace::region::STS_HOST.into());
+                let officeace = OfficeAceProvider::with_endpoints(
+                    provider.provider_id(),
+                    provider.region,
+                    provider.verification(),
+                    reqwest::Client::new(),
+                    cloud,
+                    sts,
+                )
+                .with_credentials_store(Arc::new(AccountCredentialStore::new(
+                    accounts.credentials().clone(),
+                )));
+                registry.register(Arc::new(officeace))?;
+            }
             ProviderKind::Workbuddy => {
                 let client = reqwest::Client::new();
                 let workbuddy = match provider.base_url.as_deref() {
@@ -388,6 +413,25 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                     ProviderKind::Codearts,
                     provider.region,
                     Arc::new(CodeArtsCheckinExecutor::new(base_url, sts_url)?),
+                );
+            }
+            ProviderKind::Officeace => {
+                // Claims change account state, so they stay opt-in.
+                let claim_enabled = option(provider, "checkin.claim_enabled")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+                let cloud = option(provider, "cloud_url")
+                    .unwrap_or_else(|| crate::providers::officeace::region::CLOUD_HOST.into());
+                let sts = option(provider, "sts_url")
+                    .unwrap_or_else(|| crate::providers::officeace::region::STS_HOST.into());
+                routing = routing.with(
+                    ProviderKind::Officeace,
+                    provider.region,
+                    Arc::new(OfficeAceCheckinExecutor::new(
+                        cloud,
+                        sts,
+                        claim_enabled,
+                        reqwest::Client::new(),
+                    )),
                 );
             }
             ProviderKind::Qoder => {

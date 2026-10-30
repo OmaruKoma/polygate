@@ -102,6 +102,25 @@ body {
 .hint { font-size: 11.5px; color: var(--text-muted); margin: 2px 0 0; }
 .strong { font-weight: 600; color: var(--text-primary); }
 .tiny { font-size: 11px; color: var(--text-muted); }
+
+.caps { display: flex; flex-wrap: wrap; gap: 4px; }
+.cap {
+  font-size: 10px; line-height: 1.6;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.cap.off { opacity: 0.35; text-decoration: line-through; }
+
+/* Provider group header inside the native-model table. */
+tr.group-row td {
+  background: var(--surface-raised);
+  padding-top: 6px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+tr.group-row .tiny { margin-left: 8px; }
 .sub { font-size: 11.5px; color: var(--text-secondary); }
 
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -172,6 +191,34 @@ code, pre, .json, .kv dd {
   font-weight: 700; font-size: 12px; letter-spacing: 0.02em;
 }
 .brand-mark.small { width: 26px; height: 26px; border-radius: var(--radius-sm); font-size: 10.5px; }
+
+/* Project mark: the artwork is a square PNG with a transparent background. */
+.brand-logo {
+  width: 32px; height: 32px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--border) inset;
+}
+.brand-logo.large {
+  width: 56px; height: 56px;
+  border-radius: 15px;
+  display: block;
+}
+
+.nav-icon {
+  width: 15px; height: 15px; flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--text-muted);
+  transition: color 0.1s ease;
+}
+.nav-item:hover .nav-icon { color: var(--text-secondary); }
+.nav-item.active .nav-icon { color: var(--accent); }
 
 /* ------------------------------------------------------------------ layout */
 

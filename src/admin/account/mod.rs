@@ -513,6 +513,107 @@ pub async fn persist_loomy_session(
     Ok(account)
 }
 
+/// Persist a successful OfficeAce authorization.
+///
+/// Identity is `officeace:cn:<account_id>`; when the control plane does not
+/// report one, a fingerprint of the app key keeps re-authorizations on the same
+/// row instead of creating a duplicate.
+pub async fn persist_officeace_login(
+    state: &AdminState,
+    credential: Value,
+    account_id: &str,
+    nickname: &str,
+    requested_name: Option<&str>,
+) -> Result<Account, GatewayError> {
+    let region = Region::Cn;
+    let account_id = account_id.trim();
+    let app_key = credential
+        .get("model_app_key")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let external_id = if account_id.is_empty() {
+        format!("officeace:cn:app-{}", session_fingerprint(app_key))
+    } else {
+        format!("officeace:cn:{account_id}")
+    };
+    let nickname = nickname.trim();
+    let requested_name = requested_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(64).collect::<String>())
+        .unwrap_or_else(|| {
+            if nickname.is_empty() {
+                "OfficeAce account".to_string()
+            } else {
+                format!("OfficeAce {nickname}")
+            }
+        });
+    let metadata = json!({
+        "account_id": account_id,
+        "principal_id": credential.get("principal_id").cloned().unwrap_or(Value::Null),
+        "user_name": credential.get("user_name").cloned().unwrap_or(Value::Null),
+        "realm": region.as_str(),
+        "auth_source": "oauth",
+    });
+    let secret = crate::accounts::Credential::from_value(credential);
+
+    if let Some(existing) = state
+        .accounts
+        .find_by_external(ProviderKind::Officeace, region, &external_id)
+        .await?
+    {
+        let status = state.accounts.credentials().status(&existing.id).await?;
+        match status.and_then(|status| status.revision) {
+            Some(revision) => {
+                state
+                    .accounts
+                    .credentials()
+                    .update(&existing.id, &secret, revision)
+                    .await?;
+            }
+            None => {
+                state
+                    .accounts
+                    .credentials()
+                    .save(&existing.id, &secret)
+                    .await?;
+            }
+        }
+        let updated = state
+            .accounts
+            .update(
+                &existing.id,
+                AccountUpdate {
+                    name: Some(requested_name),
+                    metadata: Some(metadata),
+                    ..AccountUpdate::default()
+                },
+            )
+            .await?;
+        state
+            .accounts
+            .record_auth_status(&existing.id, crate::accounts::AuthStatus::Valid, None)
+            .await?;
+        return Ok(updated);
+    }
+
+    let mut request = CreateAccount::new(
+        ProviderKind::Officeace,
+        region,
+        requested_name,
+        Some(secret.to_json().clone()),
+    );
+    request.provider = "officeace-cn".to_string();
+    request.external_id = Some(external_id);
+    request.metadata = metadata;
+    let account = state.accounts.create(request).await?;
+    state
+        .accounts
+        .record_auth_status(&account.id, crate::accounts::AuthStatus::Valid, None)
+        .await?;
+    Ok(account)
+}
+
 /// Stable, non-reversible fingerprint used only for an account identity.
 fn session_fingerprint(session: &str) -> String {
     use sha2::{Digest, Sha256};

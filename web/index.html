@@ -4,7 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>PolyGate 管理面板</title>
+  <meta name="theme-color" content="#5bc4b5">
+  <meta name="description" content="PolyGate — 多 Provider Coding Agent 网关控制台">
+  <title>PolyGate 控制台</title>
+  <link rel="icon" type="image/png" href="/admin/static/favicon.png">
+  <link rel="apple-touch-icon" href="/admin/static/apple-touch-icon.png">
   <link rel="stylesheet" href="/admin/static/app.css">
 </head>
 <body>
@@ -12,7 +16,7 @@
 
   <section id="auth-screen" class="auth-screen hidden">
     <div class="auth-card">
-      <div class="brand-mark">PG</div>
+      <img class="brand-logo large" src="/admin/static/logo.png" alt="PolyGate">
       <h1>PolyGate</h1>
       <p class="muted">多 Provider Coding Agent 网关</p>
       <form id="setup-form" class="hidden">
@@ -44,26 +48,48 @@
   <div id="app" class="app hidden">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark small">PG</div>
+        <img class="brand-logo" src="/admin/static/logo.png" alt="">
         <div><strong>PolyGate</strong><span class="muted">控制台</span></div>
       </div>
       <nav class="nav">
-        <button class="nav-item" data-view="dashboard"><span>▦</span>仪表盘</button>
+        <button class="nav-item" data-view="dashboard">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          仪表盘
+        </button>
         <div class="nav-group">
-          <button class="nav-item" data-view="accounts"><span>◉</span>账号管理</button>
+          <button class="nav-item" data-view="accounts">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            账号管理
+          </button>
           <div class="subnav">
             <button class="subnav-item" data-provider="codearts">CodeArts</button>
             <button class="subnav-item" data-provider="qoder">Qoder</button>
             <button class="subnav-item" data-provider="trae">TRAE</button>
             <button class="subnav-item" data-provider="workbuddy">WorkBuddy</button>
             <button class="subnav-item" data-provider="loomy">Loomy</button>
+            <button class="subnav-item" data-provider="officeace">OfficeAce</button>
           </div>
         </div>
-        <button class="nav-item" data-view="models"><span>◇</span>模型管理</button>
-        <button class="nav-item" data-view="checkins"><span>✓</span>签到管理</button>
-        <button class="nav-item" data-view="usage"><span>∿</span>用量统计</button>
-        <button class="nav-item" data-view="logs"><span>≡</span>请求日志</button>
-        <button class="nav-item" data-view="settings"><span>⚙</span>系统设置</button>
+        <button class="nav-item" data-view="models">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
+          模型管理
+        </button>
+        <button class="nav-item" data-view="checkins">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.2 12.4 2.6 2.6 5-5.4"/></svg>
+          签到管理
+        </button>
+        <button class="nav-item" data-view="usage">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18"/><rect x="5" y="11" width="3.6" height="6" rx="1.2"/><rect x="10.2" y="6.5" width="3.6" height="10.5" rx="1.2"/><rect x="15.4" y="13" width="3.6" height="4" rx="1.2"/></svg>
+          用量统计
+        </button>
+        <button class="nav-item" data-view="logs">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/></svg>
+          请求日志
+        </button>
+        <button class="nav-item" data-view="settings">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9"/><circle cx="16" cy="6" r="2.2"/><path d="M18.2 6H20"/><path d="M4 12h2"/><circle cx="9" cy="12" r="2.2"/><path d="M11.2 12H20"/><path d="M4 18h9"/><circle cx="16" cy="18" r="2.2"/><path d="M18.2 18H20"/></svg>
+          系统设置
+        </button>
       </nav>
       <div class="sidebar-foot">
         <button class="btn ghost small" id="theme-toggle">切换主题</button>

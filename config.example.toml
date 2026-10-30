@@ -184,6 +184,21 @@ name = "Mock (development)"
 # admin panel; it is a 14-day bearer with no refresh token.
 #
 # [[providers]]
+# kind = "officeace"
+# region = "cn"                       # the only deployment; "intl" is rejected
+# enabled = true
+#
+#   [providers.options]
+#   "checkin.claim_enabled" = "true"  # default false: the daily bonus claim is
+#                                     # a write that changes account state
+#   # "cloud_url" = "https://agentarts.cn-southwest-2.myhuaweicloud.com"
+#   # "sts_url"   = "https://sts.cn-north-4.myhuaweicloud.com"
+#
+# Authorize in the admin panel (account management -> OfficeAce). Chat uses a
+# permanent Basic app key; points and check-in use a ~2h AK/SK that is renewed
+# with a one-time refresh token plus its DPoP key.
+#
+# [[providers]]
 # kind = "trae"
 # region = "cn"
 # enabled = true

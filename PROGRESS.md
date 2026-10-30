@@ -2852,7 +2852,7 @@ $ cargo test             test result: ok. 380 passed; 0 failed
 $ cargo fmt --all --check （无输出）
 ```
 
-### 30.4 真实账号观察（2026-10-29，CN 账号 `edufx`）
+### 30.4 真实账号观察（2026-10-29，CN 账号 A）
 
 | 请求 | 观察 |
 | --- | --- |
@@ -2878,7 +2878,7 @@ $ cargo fmt --all --check （无输出）
   `ProviderContext`，过期账号不再只能重登。
 - 单测：过期 + 有 refresh 材料 → 刷新一次并 CAS 写回（revision 3→4）；
   过期但无 refresh 材料 → 返回 `Expired` 而不是传输错误。
-- 真实账号（重新授权后的 `hsggga`）：探测返回 `valid`；该凭据未实现过期，
+- 真实账号（重新授权后的账号 B）：探测返回 `valid`；该凭据未实现过期，
   因此本次没有触发真实刷新。
 - CodeArts 签到实测：`/v1/ops/delivery` 中没有 `campaignId=1` 的日常活动，
   执行器按既有规则记 `already_checked_in`（“activity is not available”），未发送
@@ -2942,7 +2942,7 @@ $ cargo build                              Finished `dev` profile ...
 `chat_aggregates_the_stream_into_one_response`、`chat_maps_quota_rejections_*`、
 `a_stream_without_done_or_finish_reports_truncation`。
 
-### 31.4 真实账号联调（2026-10-29，CN 账号 `edufx`）
+### 31.4 真实账号联调（2026-10-29，CN 账号 A）
 
 | 能力 | 请求 | 观察 |
 | --- | --- | --- |
@@ -4381,7 +4381,7 @@ $ cargo test --workspace                         646 passed
 
 软路由（`listen = 10.0.0.1:8787`）上把 `[admin] redirect_url` 改成局域网地址后，重新授权
 失败，回调页显示 `CodeArts authorization was rejected (STS5.1805)`；而此前
-`redirect_url = 127.0.0.1` 的流程成功建立了 `hsggga` 账号。
+`redirect_url = 127.0.0.1` 的流程成功建立了账号 B。
 
 ### 48.2 证据
 
@@ -4469,7 +4469,7 @@ $ cargo test --workspace                                  651 passed
 ```
 
 路由器新二进制（11:08 启动）：`/health` 200；`/v1/models` 22 个
-（CodeArts 10 + Qoder 11 + mock 1，Qoder CN 账号 `edufx` 已在此前授权成功）。
+（CodeArts 10 + Qoder 11 + mock 1，Qoder CN 账号 A 已在此前授权成功）。
 
 ### 49.5 未验证
 
@@ -4480,7 +4480,7 @@ $ cargo test --workspace                                  651 passed
 
 ### 50.1 现象
 
-Qoder CN 账号 `edufx` 签到结果为“失败”，错误：
+Qoder CN 账号 A 签到结果为“失败”，错误：
 
 ```text
 Qoder reward claim is disabled; set the provider option `checkin.claim_enabled = true` to allow claims
@@ -4854,3 +4854,149 @@ POST /admin/api/accounts/{id}/quota                → credits，remaining 11953
 ### 55.5 未验证
 
 工具调用的真实上游行为、图片模型、Intl（不存在该部署）、多账号调度实测。
+
+## 56. M17 — OfficeAce（华为 AgentArts）Provider：双签名、积分签到与云端授权（2026-10-30，完成）
+
+### 56.1 目标与难度评估
+
+参考实现 `RobbsLuo/Coding2API`（MIT）的 `src/provider/officeace/*` 与
+`TECHNICAL.md` §5.6。结论：改动面与 Loomy 同级，**不触碰现有 Provider 行为**，
+不新增表结构。
+
+| 部分 | 难度 | 原因 |
+| --- | --- | --- |
+| Chat / 模型目录 | 低 | 上游就是标准 OpenAI（`/v2/chat/completions` + Basic） |
+| 额度 / 签到 | 中 | 多一套 `V11-HMAC-SHA256` 签名（密钥要派生、不发 content-sha256） |
+| 凭据续期 | 中 | 一次性 refresh_token + DPoP，`client_id` 与 CodeArts 不通用 |
+| 登录 | 中 | PKCE + DPoP + **云端承接回调**，服务端轮询取码 |
+
+复用而非复制：canonical URI/query/headers 与 DPoP 原语来自
+`providers/codearts/{signer,auth}.rs`（仅把两个模块改成 `pub(crate)`，
+行为不变）。
+
+### 56.2 实现
+
+| 文件 | 内容 |
+| --- | --- |
+| `src/providers/officeace/region.rs` | 端点、`client_id`、`max_tokens` 上限与夹取、网关地址归一（去尾部 `/v2`） |
+| `src/providers/officeace/credential.rs` | 两套凭据（Basic app key + 临时 AK/SK + 一次性 refresh），`Zeroizing`，Debug 脱敏 |
+| `src/providers/officeace/signer.rs` | `V11-HMAC-SHA256` 与 `SDK-HMAC-SHA256`；V11 密钥派生、scope 行、query 参与签名 |
+| `src/providers/officeace/http.rs` | 模型网关（Basic）、V11 控制面（订阅/签到）、V4 控制面（开通校验）、STS 换票、云端 state/code |
+| `src/providers/officeace/models.rs` | `/v2/models` 解析（不主动探活） |
+| `src/providers/officeace/subscription.rs` | 积分主账、每日活动识别、奖励剩余量增量、下个北京 0 点 |
+| `src/providers/officeace/convert.rs` | 请求体（含 `max_tokens` 改写）、流聚合、usage |
+| `src/providers/officeace/events.rs` | SSE 解码 + 翻译；**伪 200 错误帧** → `StreamEvent::Error` |
+| `src/providers/officeace/provider.rs` | `Provider` 实现 + 到期刷新（CAS 回写、单账号串行） |
+| `src/providers/officeace/login.rs` | PKCE、DPoP、授权 URL、轮询、换票、开通校验 |
+| `src/providers/officeace/tests.rs` | 8 个 mock 服务器测试 |
+| `src/checkin/officeace.rs` | 签到执行器（`checkin.claim_enabled` 开关、幂等、收益增量） |
+| 接线 | `ProviderKind::Officeace`、`build_registry`、`build_checkin_executor`、`POST /admin/api/auth/officeace/start`、`GET .../{flow_id}`、`POST .../{flow_id}/cancel`、`persist_officeace_login`、管理台子导航与"先退出华为云会话"选项 |
+
+### 56.3 协议要点（与 CodeArts 的差别）
+
+- **积分就是主账**：`officeace_points` 直接是 `remaining/total`；新用户一次性
+  4000 + 每日签到 1000，各自独立到期（参考实现实测值，不写死）。
+- **签到是写操作**：`POST /v1/subscription/bonus/claim`，body 必须是 `{}`
+  （裸 POST 回 500 `OfficeAce.11020001`），字节串同时参与签名；当日重复领取幂等。
+  收益按 `bonus_skus` **剩余量增量**算，不用累计 `points`（会虚高）。
+- **V11 与 V4 不能互换**：V11 多 scope 行、密钥派生、**不发送**
+  `X-Sdk-Content-Sha256`；写错恒 401 `verify ak sk signature fail`。
+- **错误码先于状态码**：81004/81009 走 403/404 但只表示"这个号没这个模型"，
+  否则会把健康凭据打死；限流可能以 HTTP 200 + error 帧出现（含首帧正常、第二帧报错）。
+- **`max_tokens` 是推理+正文总预算**：≥16 时 +1024 再夹到模型上限，<16 原样透传。
+
+### 56.4 验证
+
+```
+cargo test --lib                      → 745 passed（新增 55 个 OfficeAce 相关）
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+cargo build
+```
+
+签名正确性用**参考实现产出的固定向量**做逐字节比对（`signer::tests::
+vectors_match_the_reference_implementation`）：同一 AK/SK/时间/URL 下
+Authorization 与参考实现完全一致（V11 与 V4 各一条）。
+
+未向真实 OfficeAce 上游发过任何请求：没有可用的真实账号。
+
+### 56.5 已知限制
+
+- 模型目录只在启动时发现（与所有 Provider 一致）；授权后需重启才有模型。
+- 不主动探活模型（探测会消耗积分）；不可用模型由真实请求标记。
+- 未展示 `cost_coefficient` 费率（模型结构暂无倍率字段），不做积分→token 估算。
+- 未实现单账号会话级节流（参考实现约 60s/3 会话）；调度器按健康度轮换。
+
+### 56.6 未验证
+
+真实账号的授权、模型目录、Chat/SSE、额度、签到、续期全部止于 MockVerified；
+provider 标记为 `experimental`。
+
+## 57. 控制台品牌化与 OfficeAce 登录首跳修复（2026-10-30，完成）
+
+### 57.1 界面
+
+- 项目图标：`web/logo.png`（256）、`favicon.png`（64）、`apple-touch-icon.png`（180），
+  由操作者提供的 PNG 去透明边后生成；登录卡片与侧边栏品牌位使用同一图。
+- 侧边栏导航图标由字符（`▦ ◉ ◇ ✓ ∿ ≡ ⚙`）换为内联 SVG（保持 15px、`currentColor`），
+  激活态跟随主题色。
+- 「系统设置 → 接入状态」由写死的三段文字改为**实时表格**（`/admin/api/providers`）：
+  Provider / 验证徽标（已实测·实验性·未验证·不支持·Mock）/ 能力 chips / 账号数 / 启停。
+  以后新增 Provider（如 OfficeAce）不需要再改文案。
+- 标题改为「PolyGate 控制台」，补 `theme-color` / `description` / favicon 链接。
+
+### 57.2 OfficeAce 登录首跳失败（真实账号触发）
+
+现象：华为云授权完成后流程失败，面板跳回登录页。
+
+根因两条：
+
+1. `login::complete` 在拿到授权码后，先用 `OfficeAceCredential::from_value` 解析
+   **尚未包含聊天密钥**的临时凭据（聊天密钥由下一步
+   `client-permission-validate` 下发），于是必然报
+   `credential has no chat app key`。换票、DPoP 与授权码轮询本身是成功的。
+   修复：开通校验只用临时 AK/SK 的 `SignCredential` 签名
+   （`http::permission_validate` 签名改为接收 `SignCredential`）。
+2. 该错误是 `AuthInvalid`，接口返回 401；面板把任何 401 当作「管理会话过期」
+   并跳登录页。修复：授权流程的**终态错误**落库后以 `status = failed` 的
+   flow view 返回（HTTP 200），错误显示在弹窗里。
+
+回归测试：`the_login_flow_exchanges_the_code_before_it_needs_the_chat_key`
+（mock 服务器：换票 → 开通校验 → 凭据组装，并断言 V4 签名头）。
+
+### 57.3 验证
+
+- `cargo test --lib` 746 passed；fmt/clippy 通过。
+- 本地实例（127.0.0.1:18099）实机走查：深色/浅色主题、登录页、仪表盘、
+  系统设置接入状态表，均用 Chrome 截图确认。
+
+### 57.4 原生模型按 Provider 排序
+
+- `src/admin/api/mod.rs::model_routes_body`：`native` 列表按 Provider id（忽略大小写）
+  再按模型 id 排序后再返回，顺序不再取决于目录发现顺序。
+- `web/app.js`：新增 `nativeGroups()`，把相邻同 Provider 的模型折叠成一组，
+  每组渲染一行 `tr.group-row`（`provider · kind · REGION · N 个模型`），
+  表头由「模型 ID / Provider / 上下文 / 可用」缩为「模型 ID / 上下文 / 可用」。
+- `web/app.css`：`tr.group-row` 用 `surface-raised` 底色区分分组行。
+
+验证（本地实例，mock provider）：
+
+```text
+GET /admin/api/model-routes → native 顺序
+  mock-cn/alpha-model, mock-cn/zeta-model, mock-intl/beta-model
+页面：mock-cn · mock · CN · 2 个模型（alpha/zeta），
+      mock-intl · mock · INTL · 1 个模型（beta）
+```
+
+### 57.5 部署
+
+```text
+$ cargo fmt --all -- --check                       → 通过
+$ cargo clippy --all-targets -- -D warnings       → 通过
+$ cargo test --lib                                 → 746 passed
+$ cargo zigbuild --release --target aarch64-unknown-linux-musl → 成功（11,369,896 B）
+```
+
+路由器（10.0.0.1）：二进制 sha256 `1fc16361…618f2ec`，旧版备份
+`/usr/bin/polygate.bak-20261030-1450`；`doctor` 9 个 Provider 全部加载
+（含 officeace-cn），`/health` 200，`/admin/static/app.js` 已含 `nativeGroups`。

@@ -68,6 +68,7 @@ pub struct AdminSettings {
     pub login_max_failures: usize,
     pub login_window: Duration,
     pub codearts: LoginConfig,
+    pub officeace: crate::providers::officeace::login::LoginConfig,
 }
 
 impl AdminSettings {
@@ -99,7 +100,28 @@ impl AdminSettings {
                 intl_portal_url: admin.codearts_intl_portal_url.clone(),
                 sts_url: admin.codearts_sts_url.clone(),
             },
+            officeace: officeace_login_config(config),
         }
+    }
+}
+
+/// OfficeAce control-plane endpoints follow the provider entry so a private
+/// deployment and the tests can point the flow somewhere else.
+fn officeace_login_config(config: &Config) -> crate::providers::officeace::login::LoginConfig {
+    use crate::providers::officeace::region;
+    let provider = config.providers.iter().find(|provider| {
+        provider.kind == crate::config::ProviderKind::Officeace && provider.enabled
+    });
+    let option = |key: &str| {
+        provider
+            .and_then(|provider| provider.options.get(key))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    crate::providers::officeace::login::LoginConfig {
+        cloud: option("cloud_url").unwrap_or_else(|| region::CLOUD_HOST.into()),
+        sts: option("sts_url").unwrap_or_else(|| region::STS_HOST.into()),
+        ..Default::default()
     }
 }
 
@@ -115,6 +137,7 @@ pub struct AdminState {
     pub http: reqwest::Client,
     pub qoder_auth: QoderAuthClient,
     pub qoder_flow_locks: FlowLocks,
+    pub officeace_flow_locks: FlowLocks,
     pub workbuddy_auth: WorkbuddyAuthClient,
     pub workbuddy_flow_locks: FlowLocks,
     pub workbuddy_poll_guard: PollThrottle,
@@ -233,6 +256,7 @@ impl AdminState {
             http,
             qoder_auth,
             qoder_flow_locks: FlowLocks::default(),
+            officeace_flow_locks: FlowLocks::default(),
             workbuddy_auth,
             workbuddy_flow_locks: FlowLocks::default(),
             workbuddy_poll_guard: PollThrottle::default(),
@@ -320,6 +344,18 @@ pub fn router(state: AdminState) -> Router {
         .route(
             "/admin/api/auth/codearts/{flow_id}/cancel",
             post(api::cancel_codearts_flow),
+        )
+        .route(
+            "/admin/api/auth/officeace/start",
+            post(api::start_officeace_auth),
+        )
+        .route(
+            "/admin/api/auth/officeace/{flow_id}",
+            get(api::officeace_flow_status),
+        )
+        .route(
+            "/admin/api/auth/officeace/{flow_id}/cancel",
+            post(api::cancel_officeace_flow),
         )
         .route("/admin/api/auth/qoder/start", post(api::start_qoder_auth))
         .route(

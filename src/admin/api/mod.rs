@@ -270,26 +270,39 @@ pub async fn model_routes(State(state): State<AdminState>) -> Response {
 
 async fn model_routes_body(state: &AdminState) -> Result<Value, GatewayError> {
     let aliases = crate::model_service::list_aliases(&state.storage, &state.registry).await?;
-    let native: Vec<Value> = state
+    // Grouped by provider (then model id) so the console lists one upstream's
+    // models together instead of interleaving whatever order discovery used.
+    let mut native: Vec<(String, String, Value)> = state
         .catalog
         .entries()
         .iter()
         .map(|entry| {
-            json!({
-                "id": entry.id,
-                "provider": state
-                    .registry
-                    .get(&entry.provider)
-                    .map(|info| info.info().id)
-                    .unwrap_or_else(|| entry.provider.to_string()),
-                "kind": entry.provider.kind.as_str(),
-                "region": entry.provider.region.as_str(),
-                "display_name": entry.display_name,
-                "context_window": entry.context_window,
-                "available": state.registry.is_enabled(&entry.provider),
-            })
+            let provider_id = state
+                .registry
+                .get(&entry.provider)
+                .map(|info| info.info().id)
+                .unwrap_or_else(|| entry.provider.to_string());
+            (
+                provider_id.clone(),
+                entry.id.clone(),
+                json!({
+                    "id": entry.id,
+                    "provider": provider_id,
+                    "kind": entry.provider.kind.as_str(),
+                    "region": entry.provider.region.as_str(),
+                    "display_name": entry.display_name,
+                    "context_window": entry.context_window,
+                    "available": state.registry.is_enabled(&entry.provider),
+                }),
+            )
         })
         .collect();
+    native.sort_by(|a, b| {
+        a.0.to_ascii_lowercase()
+            .cmp(&b.0.to_ascii_lowercase())
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    let native: Vec<Value> = native.into_iter().map(|(_, _, value)| value).collect();
     Ok(json!({
         "aliases": aliases,
         "native": native,
@@ -945,6 +958,10 @@ pub struct StartAuthRequest {
     pub machine_id: Option<String>,
     #[serde(default)]
     pub device_id: Option<String>,
+    /// OfficeAce only: log out of the Huawei cloud session first so the
+    /// operator can pick the account being added.
+    #[serde(default)]
+    pub switch_account: Option<bool>,
 }
 
 pub async fn start_codearts_auth(
@@ -1014,6 +1031,48 @@ pub async fn cancel_qoder_flow(
     Path(flow_id): Path<String>,
 ) -> Response {
     match state.cancel_qoder_flow(&flow_id).await {
+        Ok(view) => json_ok(serde_json::to_value(view).unwrap_or(Value::Null)),
+        Err(error) => json_error(&error),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OfficeAce authorization
+// ---------------------------------------------------------------------------
+
+pub async fn start_officeace_auth(
+    State(state): State<AdminState>,
+    Json(request): Json<StartAuthRequest>,
+) -> Response {
+    if request.region.trim() != "cn" {
+        return json_error(&GatewayError::bad_request(
+            "OfficeAce only has a CN deployment; use region = cn",
+        ));
+    }
+    match state
+        .start_officeace_flow(request.name, request.switch_account.unwrap_or(false))
+        .await
+    {
+        Ok(view) => json_ok(serde_json::to_value(view).unwrap_or(Value::Null)),
+        Err(error) => json_error(&error),
+    }
+}
+
+pub async fn officeace_flow_status(
+    State(state): State<AdminState>,
+    Path(flow_id): Path<String>,
+) -> Response {
+    match state.officeace_flow_status(&flow_id).await {
+        Ok(view) => json_ok(serde_json::to_value(view).unwrap_or(Value::Null)),
+        Err(error) => json_error(&error),
+    }
+}
+
+pub async fn cancel_officeace_flow(
+    State(state): State<AdminState>,
+    Path(flow_id): Path<String>,
+) -> Response {
+    match state.cancel_officeace_flow(&flow_id).await {
         Ok(view) => json_ok(serde_json::to_value(view).unwrap_or(Value::Null)),
         Err(error) => json_error(&error),
     }

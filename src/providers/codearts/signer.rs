@@ -99,7 +99,7 @@ pub fn canonical_uri(path: &str) -> String {
     }
 }
 
-fn canonical_query(query: Option<&str>) -> String {
+pub(crate) fn canonical_query(query: Option<&str>) -> String {
     let Some(raw) = query else {
         return String::new();
     };
@@ -118,7 +118,7 @@ fn clean_header_value(value: &str) -> String {
     value.replace(['\r', '\n'], "").trim().to_string()
 }
 
-fn canonical_headers(headers: &[(String, String)]) -> (String, String) {
+pub(crate) fn canonical_headers(headers: &[(String, String)]) -> (String, String) {
     let mut lowered: Vec<(String, String)> = headers
         .iter()
         .map(|(key, value)| (key.to_ascii_lowercase(), clean_header_value(value)))
