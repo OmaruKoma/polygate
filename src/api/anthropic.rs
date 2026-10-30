@@ -442,6 +442,8 @@ impl WireRequest for AnthropicRequest {
             top_p: self.top_p,
             stop: self.stop_sequences.clone().unwrap_or_default(),
             stream: self.streaming(),
+            enable_thinking: None,
+            reasoning_effort: None,
             metadata: self.metadata.clone(),
         })
     }

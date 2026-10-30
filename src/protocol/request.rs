@@ -44,6 +44,14 @@ pub struct ChatRequest {
     pub stop: Vec<String>,
     #[serde(default)]
     pub stream: bool,
+    /// Caller hint that the model should expose its reasoning trace. `None`
+    /// keeps the provider default; adapters without a matching upstream field
+    /// drop it instead of inventing one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_thinking: Option<bool>,
+    /// Caller effort hint (`low`/`medium`/`high`, Qwen-style `none` disables).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     /// Opaque caller metadata. Adapters must not forward it upstream unless the
     /// provider documents a matching field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,6 +71,8 @@ impl ChatRequest {
             top_p: None,
             stop: Vec::new(),
             stream: false,
+            enable_thinking: None,
+            reasoning_effort: None,
             metadata: None,
         }
     }

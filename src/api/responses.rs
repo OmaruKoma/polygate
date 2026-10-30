@@ -487,6 +487,8 @@ impl WireRequest for ResponsesRequest {
             top_p: self.top_p,
             stop: Vec::new(),
             stream: self.streaming(),
+            enable_thinking: None,
+            reasoning_effort: None,
             metadata: self
                 .metadata
                 .clone()

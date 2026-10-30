@@ -831,3 +831,100 @@ fn session_id_prefers_the_header_and_otherwise_uses_a_stable_prefix() {
         Some("client-supplied")
     );
 }
+
+#[tokio::test]
+async fn chat_accepts_qoder_thinking_fields() {
+    let app = test_app(MockConfig::default()).await;
+    let mut body = chat("mock-chat", "hello", false);
+    body["enable_thinking"] = json!(true);
+    body["reasoning_effort"] = json!("medium");
+    body["thinking_budget"] = json!(4096);
+    body["reasoning_budget_tokens"] = json!(4096);
+    body["preserve_thinking"] = json!(true);
+
+    let (status, _headers, body) = send(&app.app, post_chat(&body, Some(KEY))).await;
+    assert_eq!(status, StatusCode::OK, "{}", text_body(&body));
+}
+
+#[test]
+fn thinking_object_and_flag_resolve_to_one_hint() {
+    use super::ChatCompletionRequest;
+
+    let parse = |extra: Value| -> ChatCompletionRequest {
+        let mut body = chat("mock-chat", "hello", false);
+        for (key, value) in extra.as_object().expect("object") {
+            body[key] = value.clone();
+        }
+        serde_json::from_value(body).expect("request")
+    };
+
+    let request = parse(json!({"enable_thinking": true}));
+    let internal = request
+        .to_chat_request("upstream", "req".into())
+        .expect("internal");
+    assert_eq!(internal.enable_thinking, Some(true));
+
+    let request = parse(json!({"thinking": {"type": "disabled"}, "enable_thinking": true}));
+    let internal = request
+        .to_chat_request("upstream", "req".into())
+        .expect("internal");
+    assert_eq!(internal.enable_thinking, Some(false));
+
+    let request = parse(json!({"reasoning_effort": "  medium "}));
+    let internal = request
+        .to_chat_request("upstream", "req".into())
+        .expect("internal");
+    assert_eq!(internal.reasoning_effort.as_deref(), Some("medium"));
+}
+
+#[tokio::test]
+async fn chat_accepts_assistant_reasoning_replay() {
+    let app = test_app(MockConfig::default()).await;
+    let body = json!({
+        "model": "mock-chat",
+        "stream": false,
+        "messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi", "reasoning_content": "thought about it"},
+            {"role": "user", "content": "again"},
+        ],
+    });
+
+    let (status, _headers, body) = send(&app.app, post_chat(&body, Some(KEY))).await;
+    assert_eq!(status, StatusCode::OK, "{}", text_body(&body));
+}
+
+#[tokio::test]
+async fn chat_rejects_reasoning_on_non_assistant_messages() {
+    let app = test_app(MockConfig::default()).await;
+    let body = json!({
+        "model": "mock-chat",
+        "stream": false,
+        "messages": [{"role": "user", "content": "hello", "reasoning_content": "x"}],
+    });
+
+    let (status, _headers, body) = send(&app.app, post_chat(&body, Some(KEY))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", text_body(&body));
+    assert!(text_body(&body).contains("reasoning_content"));
+}
+
+#[tokio::test]
+async fn chat_accepts_tool_call_index_in_replayed_history() {
+    let app = test_app(MockConfig::default()).await;
+    let body = json!({
+        "model": "mock-chat",
+        "stream": false,
+        "messages": [
+            {"role": "user", "content": "list files"},
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"index": 0, "id": "call_1", "type": "function",
+                 "function": {"name": "list_dir", "arguments": "{\"path\":\".\"}"}}
+            ]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "a.txt"},
+            {"role": "user", "content": "thanks"},
+        ],
+    });
+
+    let (status, _headers, body) = send(&app.app, post_chat(&body, Some(KEY))).await;
+    assert_eq!(status, StatusCode::OK, "{}", text_body(&body));
+}

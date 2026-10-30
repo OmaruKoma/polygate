@@ -2,8 +2,11 @@
 //!
 //! The wire DTOs are deliberately strict: unknown fields are rejected instead
 //! of silently ignored, because the gateway cannot honour parameters it does
-//! not implement. All conversions go through the internal `protocol` types;
-//! nothing here leaks into provider adapters.
+//! not implement. The exception is the thinking family (`enable_thinking`,
+//! `thinking`, `reasoning_effort`, budgets): clients set them from a single
+//! toggle and the hint is forwarded only where the provider documents a
+//! matching upstream field. All conversions go through the internal `protocol`
+//! types; nothing here leaks into provider adapters.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -24,6 +27,20 @@ pub struct ChatCompletionRequest {
     pub stream: Option<bool>,
     #[serde(default)]
     pub stream_options: Option<StreamOptions>,
+    /// Qoder-style thinking hints. Accepted so clients that always send them
+    /// (Qoder IDE with 思考模式 on) keep working; budgets are not honoured.
+    #[serde(default)]
+    pub enable_thinking: Option<bool>,
+    #[serde(default)]
+    pub thinking: Option<Value>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub thinking_budget: Option<u64>,
+    #[serde(default)]
+    pub reasoning_budget_tokens: Option<u64>,
+    #[serde(default)]
+    pub preserve_thinking: Option<bool>,
     #[serde(default)]
     pub max_tokens: Option<u64>,
     #[serde(default)]
@@ -66,6 +83,10 @@ pub struct WireMessage {
     pub content: Option<Value>,
     #[serde(default)]
     pub name: Option<String>,
+    /// Assistant reasoning replayed by clients that keep the thinking trace
+    /// (Qoder with `preserve_thinking`).
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<WireToolCall>>,
     #[serde(default)]
@@ -78,6 +99,10 @@ pub struct WireToolCall {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,
+    /// Stream-only ordinal that some clients (Qoder) also replay in history;
+    /// the array order is authoritative here, so it is accepted and ignored.
+    #[serde(default)]
+    pub index: Option<u32>,
     pub function: WireToolCallFunction,
 }
 
@@ -140,6 +165,18 @@ impl ChatCompletionRequest {
             .unwrap_or(false)
     }
 
+    /// Resolve the several thinking spellings into one hint.
+    fn thinking_hint(&self) -> Option<bool> {
+        if let Some(thinking) = &self.thinking {
+            match thinking.get("type").and_then(Value::as_str) {
+                Some("disabled") => return Some(false),
+                Some("enabled") | Some("adaptive") => return Some(true),
+                _ => {}
+            }
+        }
+        self.enable_thinking
+    }
+
     /// Reject anything the gateway cannot honour instead of ignoring it.
     pub fn validate(&self) -> Result<(), GatewayError> {
         if self.model.trim().is_empty() {
@@ -174,6 +211,15 @@ impl ChatCompletionRequest {
             if !(0.0..=1.0).contains(&top_p) {
                 return Err(GatewayError::bad_request("`top_p` must be between 0 and 1"));
             }
+        }
+        if self
+            .reasoning_effort
+            .as_deref()
+            .is_some_and(|effort| effort.trim().is_empty())
+        {
+            return Err(GatewayError::bad_request(
+                "`reasoning_effort` must not be empty",
+            ));
         }
         if let Some(tools) = &self.tools {
             if tools.is_empty() {
@@ -240,6 +286,11 @@ impl ChatCompletionRequest {
                 })
                 .unwrap_or_default(),
             stream: self.streaming(),
+            enable_thinking: self.thinking_hint(),
+            reasoning_effort: self
+                .reasoning_effort
+                .as_ref()
+                .map(|effort| effort.trim().to_string()),
             metadata: self.user.as_ref().map(|user| json!({ "user": user })),
         })
     }
@@ -267,6 +318,11 @@ fn convert_message(message: &WireMessage) -> Result<ChatMessage, GatewayError> {
                 "tool messages must not carry `tool_calls`",
             ));
         }
+        if message.reasoning_content.is_some() {
+            return Err(GatewayError::bad_request(
+                "`reasoning_content` is only valid on assistant messages",
+            ));
+        }
         let call_id = message
             .tool_call_id
             .as_deref()
@@ -286,7 +342,21 @@ fn convert_message(message: &WireMessage) -> Result<ChatMessage, GatewayError> {
         ));
     }
 
+    let replay_reasoning = message
+        .reasoning_content
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    if replay_reasoning.is_some() && role != MessageRole::Assistant {
+        return Err(GatewayError::bad_request(
+            "`reasoning_content` is only valid on assistant messages",
+        ));
+    }
+
     let mut blocks = Vec::new();
+    if let Some(reasoning) = replay_reasoning {
+        blocks.push(ContentBlock::reasoning(reasoning.to_string()));
+    }
     match &message.content {
         Some(Value::String(text)) => blocks.push(ContentBlock::text(text.clone())),
         Some(Value::Array(parts)) => {

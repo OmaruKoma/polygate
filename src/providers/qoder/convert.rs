@@ -88,15 +88,6 @@ fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayE
 }
 
 fn message_to_upstream(message: &ChatMessage) -> Result<Vec<Value>, GatewayError> {
-    for block in &message.content {
-        if let ContentBlock::Unsupported { media_type, .. } = block {
-            return Err(GatewayError::new(
-                ErrorKind::Unsupported,
-                format!("Qoder adapter cannot forward `{media_type}` content blocks"),
-            ));
-        }
-    }
-
     let text: String = message
         .content
         .iter()
@@ -133,6 +124,18 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Vec<Value>, GatewayError
                     "a `tool` message cannot carry a participant name",
                 ));
             }
+            if message.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::Unsupported { media_type, .. }
+                        if crate::providers::is_image_media(media_type)
+                )
+            }) {
+                return Err(GatewayError::new(
+                    ErrorKind::Unsupported,
+                    "a `tool` message cannot carry image content",
+                ));
+            }
             Ok(tool_results
                 .into_iter()
                 .map(|result| {
@@ -148,6 +151,18 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Vec<Value>, GatewayError
             if !tool_results.is_empty() {
                 return Err(GatewayError::bad_request(
                     "an `assistant` message cannot carry a tool result",
+                ));
+            }
+            if message.content.iter().any(|block| {
+                matches!(
+                    block,
+                    ContentBlock::Unsupported { media_type, .. }
+                        if crate::providers::is_image_media(media_type)
+                )
+            }) {
+                return Err(GatewayError::new(
+                    ErrorKind::Unsupported,
+                    "an assistant message cannot carry image content",
                 ));
             }
             let mut object = Map::new();
@@ -187,7 +202,10 @@ fn message_to_upstream(message: &ChatMessage) -> Result<Vec<Value>, GatewayError
             if let Some(name) = &message.name {
                 object.insert("name".into(), json!(name));
             }
-            object.insert("content".into(), json!(text));
+            object.insert(
+                "content".into(),
+                crate::providers::openai_content("Qoder", &message.content)?,
+            );
             Ok(vec![Value::Object(object)])
         }
     }
