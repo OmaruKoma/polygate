@@ -1046,7 +1046,12 @@
   }
 
   function openModelCreate(native, providerIds) {
-    const dedup = [...new Set(native.map((model) => model.id))];
+    // Suggestions follow the selected provider; the field still accepts any id.
+    const byProvider = new Map();
+    for (const model of native) {
+      if (!byProvider.has(model.provider)) byProvider.set(model.provider, []);
+      byProvider.get(model.provider).push(model.id);
+    }
     const modal = openModal({
       title: "新建模型别名",
       body: `
@@ -1057,7 +1062,7 @@
           </select>
         </label>
         <label>上游模型<input id="model-upstream" list="native-models" placeholder="上游模型 ID"></label>
-        <datalist id="native-models">${dedup.map((id) => `<option value="${esc(id)}"></option>`).join("")}</datalist>
+        <datalist id="native-models"></datalist>
         <label>显示名（可选）<input id="model-display" maxlength="120"></label>
         <div class="grid two">
           <label>优先级（越大越先）<input id="model-priority" type="number" value="0" step="1"></label>
@@ -1094,6 +1099,15 @@
         },
       ],
     });
+
+    const provider = $("#model-provider", modal);
+    const suggestions = $("#native-models", modal);
+    const syncSuggestions = () => {
+      const ids = byProvider.get(provider.value) || [];
+      suggestions.innerHTML = ids.map((id) => `<option value="${esc(id)}"></option>`).join("");
+    };
+    provider.addEventListener("change", syncSuggestions);
+    syncSuggestions();
   }
 
   function openModelEdit(target) {

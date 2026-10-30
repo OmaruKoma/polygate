@@ -5051,3 +5051,13 @@ POST /admin/api/accounts/{id}/quota      → unknown（"statistics response has 
 结论：Intl 的协议、签名、模型发现、对话与 SSE 与 CN 一致，差异只在账号权益与模型集合。
 与 CN 对比：CN 目录 10 个模型，Intl 只有 2 个；`deepseek-v4.1-flash` 等 CN 模型在 Intl
 返回 `inferhub.002002009.404 model is not registered`。
+
+## 60. 别名弹窗的上游模型候选按 Provider 过滤（2026-10-30，完成）
+
+「新建模型别名」的上游模型 datalist 原来列出所有 Provider 的原生模型去重合集，
+选中 `codearts-intl` 也会提示 `deepseek-v4.1-flash` 等 CN 模型，容易误判。
+改成按所选 Provider 联动：`web/app.js` 的 `openModelCreate` 先按 provider 分组，
+`change` 事件重建 `<option>` 列表；输入框仍接受任意字符串（候选只是提示）。
+
+路由器实测（10.0.0.1，sha256 `2d61b1d0…c96e78b2`）：
+`codearts-intl` → 2 个（GLM-5.1/GLM-5.2）、`codearts-cn` → 10 个、`officeace-cn` → 24 个。
