@@ -1,21 +1,42 @@
-# PolyGate
+<p align="center"><img src="web/logo.png" width="96" alt="PolyGate"></p>
 
-![Rust](https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-5bc4b5)
-![Version](https://img.shields.io/badge/version-0.1.0-5bc4b5)
-![Tests](https://img.shields.io/badge/tests-646%20passing-59bd91)
+<h1 align="center">PolyGate</h1>
 
-多 Provider 账号池 + Coding Agent API 网关。用一套本地凭据池，向 Claude Code、Codex、
-Cursor、Cline、Continue 等客户端提供 **OpenAI Chat Completions**、**OpenAI Responses**
-与 **Anthropic Messages** 三种兼容接口。
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
+  <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
+  <img src="https://img.shields.io/badge/version-0.1.0-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/tests-746%20passing-59bd91" alt="Tests">
+  <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
+</p>
 
-纯 Rust 单二进制（无 Node、无 Python 运行时），默认只监听 `127.0.0.1`，内置 Web 管理台、
-SQLite 持久化、账号调度、会话粘性、模型别名与请求日志。凭据只以 AES-256-GCM 加密落盘。
-
-选纯 Rust 的目的就是**能在低内存设备上长期跑**：软路由、路由器、NAS、1 GB 内存的小 VPS。
-没有 JIT、没有 V8 堆、没有进程外运行时，常驻只有十几 MB（实测见下文[运行时占用](#运行时占用)）。
+<p align="center">多 Provider 账号池 + Coding Agent API 网关</p>
 
 ---
+
+用一套加密保存的本地凭据池，向 Claude Code、Codex、Cursor、Cline、Continue 等客户端提供
+**OpenAI Chat Completions**、**OpenAI Responses** 与 **Anthropic Messages** 三种兼容接口。
+
+纯 Rust 单二进制（无 Node、无 Python 运行时），默认只监听 `127.0.0.1`，内置 Web 管理台、
+SQLite 持久化、账号调度、会话粘性、模型别名、请求日志与签到管理。凭据只以 AES-256-GCM 加密落盘。
+
+选纯 Rust 的目的就是**能在低内存设备上长期跑**：软路由、NAS、1 GB 内存的小 VPS。没有 JIT、
+没有 V8 堆、没有进程外运行时；在 IPQ6000 软路由上实测常驻 18 MB（见[运行时占用](#运行时占用)）。
+
+## 截图
+
+部署在软路由上的实际控制台（9 个 Provider、10 个账号、真实上游流量）：
+
+<p align="center"><img src="docs/images/dashboard.png" width="880" alt="仪表盘"></p>
+
+| | |
+| :---: | :---: |
+| <img src="docs/images/models.png" width="430" alt="模型管理"> | <img src="docs/images/accounts.png" width="430" alt="账号管理"> |
+| 模型别名与按 Provider 分组的原生模型 | 账号凭据状态与额度 |
+| <img src="docs/images/checkins.png" width="430" alt="签到管理"> | <img src="docs/images/logs.png" width="430" alt="请求日志"> |
+| 每日签到记录（成功 / 今日已签 / 失败原因） | 请求日志只存元数据，不含提示词与凭据 |
+| <img src="docs/images/settings.png" width="430" alt="系统设置"> | <img src="docs/images/login.png" width="430" alt="登录页"> |
+| Provider 接入状态与能力矩阵 | 管理员登录（Argon2id + 会话 Cookie） |
 
 ## 特性
 
@@ -24,48 +45,47 @@ SQLite 持久化、账号调度、会话粘性、模型别名与请求日志。�
 - `POST /v1/chat/completions` — JSON 与 SSE，支持 tools / tool_choice、`reasoning_content`、`stream_options.include_usage`
 - `POST /v1/responses` — 文本、多轮、function call，完整 SSE 事件生命周期（`response.*`）
 - `POST /v1/messages` — Anthropic Messages：system / messages / tool_use / tool_result / SSE
-- `GET /v1/models`、`GET /health`；三种接口统一 OpenAI / Anthropic 风格的错误体
+- `GET /v1/models`、`GET /health`；错误体按接口分别遵循 OpenAI / Anthropic 形状
 
 **账号池与调度**
 
-- 多账号、按 `(Provider, Region)` 隔离（CN / Intl 不串号）
+- 多账号、按 `(Provider, Region)` 隔离，CN 与 Intl 账号永不串号
 - 三种策略：轮询、平滑加权轮询、最少连接
 - 额度感知（只排除**已知**耗尽账号，未知额度保持 `unknown`）、失败冷却、并发许可
 - 会话粘性（`x-session-id` / 首条用户消息哈希），租约结束自动归还槽位
-- 仅在可见输出之前做故障切换；流式中途失败以 in-stream error 帧结束，绝不静默重放
+- 只在可见输出之前故障切换；流式中途失败以 in-stream error 帧结束，绝不静默重放
 
 **模型注册表**
 
 - 别名 → 多目标（provider + upstream model），支持优先级、权重、能力覆盖
-- 能力校验（tools / vision / context），`provider::model` 消除歧义，不遮蔽原生模型 ID
+- 能力校验（tools / vision / reasoning / context），`provider::model` 消除同名歧义
+- 原生模型 ID 始终可用，别名不能遮蔽同名原生模型
 
 **运维**
 
-- Web 管理台：账号授权、模型/别名、请求日志、额度与签到、设置
-- 请求日志只记录元数据（Provider、账号内部 ID、模型、状态、延迟、token 数）
-- SQLite 迁移内嵌于二进制，启动自动执行；systemd 加固单元与多阶段 Dockerfile
-- 深色控制台设计系统（细边框、小圆角、青绿强调色），适配光色主题与移动端
-
----
+- Web 管理台：授权、账号、额度、签到、模型/别名、用量、请求日志、Provider 状态
+- 请求日志只记元数据（Provider、账号内部 ID、模型、状态、延迟、token 数），不存内容
+- SQLite 迁移内嵌于二进制，启动自动执行；systemd 加固单元、Dockerfile、OpenWrt procd 脚本
+- 深色控制台（细边框、小圆角、青绿强调），跟随系统深浅色，移动端可用
 
 ## 支持的 Provider
 
-| Provider | 认证方式 | 状态 |
-| --- | --- | --- |
-| CodeArts | 浏览器 OAuth + 会话续期 | **LiveVerified**（CN 单账号） |
-| Qoder | OAuth + COSY 网关 | **LiveVerified**（CN 单账号） |
-| WorkBuddy | 设备码 / 登录态 | MockVerified（无真实账号） |
-| TRAE | 登录态 | MockVerified（无真实账号） |
-| Loomy（讯飞） | 导入桌面端会话（14 天） | **LiveVerified**（CN 单账号，2026-10-30） |
-| Mock | — | 仅用于测试与本地演示 |
+| Provider | Region | 认证 | 状态 |
+| --- | --- | --- | --- |
+| CodeArts（华为云） | CN | 浏览器 OAuth + STS/DPoP 续期 | **LiveVerified**（真实账号） |
+| CodeArts（华为云） | Intl | 同上 | MockVerified |
+| Qoder（阿里） | CN | OAuth + COSY 网关 | **LiveVerified**（真实账号） |
+| Qoder（阿里） | Intl | 同上 | **LiveVerified**（真实账号） |
+| Loomy（讯飞） | CN | 导入桌面端会话（14 天） | **LiveVerified**（真实账号） |
+| WorkBuddy（腾讯） | CN / Intl | 设备码 / 登录态 | MockVerified |
+| TRAE（字节） | CN | 登录态 | MockVerified |
+| OfficeAce（华为 AgentArts） | CN | 华为云授权（PKCE + DPoP + STS） | MockVerified |
+| Mock | — | 无 | 仅测试与本地演示 |
 
-> **MockVerified ≠ LiveVerified**：WorkBuddy / TRAE 的协议、续期、额度与签到只经过本地
-> Mock 服务器验证，没有向真实上游发过请求。Loomy 的模型发现、Chat/SSE 与额度已用真实
-> 账号实测，但会话续期、工具调用与图片模型未验证。逐项状态见 [`PROGRESS.md`](PROGRESS.md)。
+> **MockVerified ≠ LiveVerified**：MockVerified 表示协议、续期、额度与签到只经过本地确定性
+> Mock 服务器验证，没有向真实上游发过请求。逐项能力与未验证项见 [`PROGRESS.md`](PROGRESS.md)。
 >
-> 明确不支持、也不会加入：CodeBuddy、ZCode、OpenCode Zen。
-
----
+> 明确不支持，也不会加入：CodeBuddy、ZCode、OpenCode Zen。
 
 ## 快速开始
 
@@ -85,8 +105,8 @@ export POLYGATE_MASTER_KEY="$(openssl rand -hex 32)"
 ./target/release/polygate --config data/config.toml --data-dir data serve
 ```
 
-管理台：<http://127.0.0.1:8787/> — 首次访问设置管理员密码，然后在「账号管理」完成授权，
-「模型管理」确认模型目录与别名。
+打开 <http://127.0.0.1:8787/> 设置管理员密码，在「账号管理」完成授权，在「模型管理」确认
+模型目录与别名。
 
 第一次调用：
 
@@ -114,11 +134,8 @@ curl http://127.0.0.1:8787/v1/chat/completions \
   }'
 ```
 
-客户端接入（OpenAI 兼容）：把 `base_url` 指向 `http://127.0.0.1:8787/v1`，API Key 填
-`POLYGATE_API_KEY` 的值，模型名填别名。Anthropic 客户端指向 `http://127.0.0.1:8787`，
-模型名同样支持别名。
-
----
+客户端接入：OpenAI 兼容客户端把 `base_url` 指向 `http://127.0.0.1:8787/v1`；Anthropic 客户端
+指向 `http://127.0.0.1:8787`。API Key 填 `POLYGATE_API_KEY`，模型名填别名或 `provider::model`。
 
 ## 架构
 
@@ -131,7 +148,8 @@ curl http://127.0.0.1:8787/v1/chat/completions \
                    │        ▼
                    │  session_service 会话粘性 + 租约；scheduler 选号/冷却/额度
                    │        ▼
-                   │  providers/  codearts · qoder · workbuddy · trae · mock
+                   │  providers/  codearts · qoder · workbuddy · trae
+                   │              loomy · officeace · mock
                    └────────┬─────────────────────────────────┘
                             ▼                    storage/  SQLite(WAL) + 迁移
                      上游 Provider 账号池        security/ SecretBox(AES-256-GCM)
@@ -140,45 +158,32 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 依赖方向单向：`providers` 不依赖 `scheduler` / `storage`；`api` 不直接接触具体 Provider；
 `storage` 不依赖 `api` / `providers`。详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
----
+## 运行时占用
 
-## 实测性能
+**软路由实测**（Kwrt / IPQ6000，4×Cortex-A53，928 MB RAM，aarch64-musl 静态产物）：
 
-`cargo build --release`（LTO thin、strip、panic=abort），16 条 keep-alive 连接、
-1600 次 Mock 上游请求（同机、Windows）：
+| 指标 | 数值 |
+| --- | --- |
+| 二进制 | 10.8 MiB（11,369,896 B，strip + LTO） |
+| 常驻 RSS | 18.2 MB（启动约 21 分钟后采样，9 Provider / 10 账号） |
+| 峰值 RSS（VmHWM） | 34.2 MB（含启动期模型目录发现） |
+| 线程数 | 8 |
+| 虚拟内存 | 36.6 MB |
+
+**Windows 基准**（同机 Mock 上游，2026-10-29，16 条 keep-alive 连接、1600 次请求）：
 
 | 指标 | 数值 |
 | --- | --- |
 | 总耗时 | 0.852 s |
 | 吞吐 | ≈ 1878 req/s |
 | 平均 / p50 / p95 | 7.27 ms / 4.13 ms / 21.06 ms |
-| 最长 | 284.98 ms（冷启动首请求） |
-| 常驻内存 | 16.7 MB working set / 7.2 MB private |
-| 二进制 | 11.8 MB |
+| 常驻内存（空闲 → 满载） | 14.6 MB → 16.7 MB |
 
-数字来自本机 Mock 上游，不含真实上游网络延迟。
+内存不随请求量单调增长：请求路径上的分配都是短命的，会持续增长的只有磁盘上的 SQLite 文件；
+调度器与会话租约是有界结构。并发流式连接数是唯一的上限来源，每条约几十 KB。
+`cargo build` 的 debug 构建会到 60 MB 上下，部署请一律用 `--release`。
 
-## 运行时占用
-
-单实例、release 构建、连接内嵌 SQLite 的实测（Windows 10，同机 Mock 上游）：
-
-| 场景 | Working Set | Private Commit |
-| --- | --- | --- |
-| 刚启动、空闲 | 14.6 MB | 4.6 MB |
-| 800 次 `/health`（8 条长连接） | 14.8 MB | 5.1 MB |
-| 再 160 次 chat（含 40 条 SSE 流） | 15.5 MB | 5.1 MB |
-| 1600 次请求基准（16 连接） | 16.7 MB | 7.2 MB |
-
-内存不随请求量单调增长：请求路径上的分配都是短命的，真正会涨的是磁盘上的 SQLite 文件；
-调度器与会话租约是有界内存结构。并发流式连接数是唯一的上限来源，每条约几十 KB。
-所以 1 GB 内存的路由器/NAS 上跑一个完整网关 + 管理台没有压力，
-Linux 下 RSS 通常还更低（10–20 MB）。
-
-`cargo build` 的 debug 构建会到 60 MB 上下（未优化 + 大粒度栈提交），部署请一律用 `--release`。
-
----
-
-## 配置与部署
+## 部署
 
 - 配置：`data/config.toml`（或 `POLYGATE_CONFIG`），完整示例见 [`config.example.toml`](config.example.toml)
 - 环境变量：`POLYGATE_API_KEY`、`POLYGATE_MASTER_KEY`、`POLYGATE_LISTEN`、
@@ -187,21 +192,21 @@ Linux 下 RSS 通常还更低（10–20 MB）。
 - 密钥不入配置文件；主密钥只来自 `POLYGATE_MASTER_KEY` 或 `data/master.key`（0600，自动生成）
 
 Linux 部署（systemd / Docker / 反代 / 备份 / 升级）见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)；
-现成的单元文件与镜像定义在 [`deploy/`](deploy/)。
+现成单元文件与镜像定义在 [`deploy/`](deploy/)。
 
-**软路由 / ARM 盒子**：提供 `aarch64-unknown-linux-musl` 静态产物（10.5 MiB，gzip 4.7 MiB），
-不依赖路由器 libc，IPQ6000 / MT7986 / IPQ807x 等 Cortex-A53 平台可直接运行。procd 启动脚本与
+**软路由 / ARM 盒子**：提供 `aarch64-unknown-linux-musl` 静态产物，不依赖路由器 libc，
+IPQ6000 / MT7986 / IPQ807x 等 Cortex-A53 平台可直接运行。procd 启动脚本与
 环境变量模板在 [`deploy/openwrt/`](deploy/openwrt/)，步骤见
 [`docs/DEPLOYMENT.md` §12](docs/DEPLOYMENT.md#12-openwrt--kwrtaarch64-软路由)。
 
 ## 安全默认值
 
 - 只监听 `127.0.0.1`；公网部署必须置于 TLS 反向代理之后
-- 管理面与数据面凭据分离；管理台用 HttpOnly Cookie + CSRF + Origin 校验
+- 管理面与数据面凭据分离；管理台用 HttpOnly + SameSite Cookie + CSRF + Origin 校验
 - 凭据只经 `SecretBox` 加解密；日志、错误、管理 API 不回显 token / cookie / Authorization
 - 请求日志不含提示词、消息内容、工具参数
 - 未知额度保持 `unknown`（`null`），不当成 0 或无限
-- 默认以 `polygate/<version>` 标识自身；不生成设备指纹，不实现验证码破解、批量注册、封禁换号续跑
+- 不生成设备指纹，不实现验证码破解、批量注册、封禁换号续跑、额度与风控绕过
 
 ## 文档
 
@@ -212,8 +217,9 @@ Linux 部署（systemd / Docker / 反代 / 备份 / 升级）见 [`docs/DEPLOYME
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Linux 构建、systemd、Docker、反代、备份、升级 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 模块职责、依赖方向与技术决策 |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Provider 能力矩阵与协议差异 |
-| [`docs/LOOMY_MIGRATION.md`](docs/LOOMY_MIGRATION.md) | Loomy 接入：会话导入、协议头、能力与限制 |
 | [`docs/WEB_ADMIN.md`](docs/WEB_ADMIN.md) | 管理台使用说明 |
+| [`docs/LOOMY_MIGRATION.md`](docs/LOOMY_MIGRATION.md) | Loomy 接入：会话导入、协议头、能力与限制 |
+| [`docs/OFFICEACE_MIGRATION.md`](docs/OFFICEACE_MIGRATION.md) | OfficeAce 接入：双签名、积分签到、云端授权 |
 | [`PROGRESS.md`](PROGRESS.md) | 里程碑、实测结果、未完成项与已知问题 |
 | [`AGENTS.md`](AGENTS.md) | 开发规范与安全红线 |
 
@@ -221,7 +227,7 @@ Linux 部署（systemd / Docker / 反代 / 备份 / 升级）见 [`docs/DEPLOYME
 
 ```bash
 cargo build
-cargo test
+cargo test                                        # 746 passed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
@@ -234,12 +240,11 @@ cargo fmt --check
 
 | 项目 | 参考的部分 |
 | --- | --- |
-| [RobbsLuo/Coding2API](https://github.com/RobbsLuo/Coding2API) | 各 Provider 的协议事实：CodeArts 会话槽位与 `TM.00001041` 并发错误、签到端点与额度字段、WorkBuddy / TRAE 的请求头族与事件格式 |
+| [RobbsLuo/Coding2API](https://github.com/RobbsLuo/Coding2API) | 各 Provider 的协议事实：CodeArts 会话槽位与 `TM.00001041` 并发错误、签到端点与额度字段、WorkBuddy / TRAE / OfficeAce 的请求头族、签名派生与事件格式 |
 | [chengzhi-c/dsh-wtq-pool](https://github.com/chengzhi-c/dsh-wtq-pool) | 账号池设计：槽位持久化、延迟开放重试、额度分组；Web UI 的视觉语言（深灰分层、青绿强调、细边框、胶囊按钮） |
 
 审计过程与逐条结论见 [`docs/RESEARCH.md`](docs/RESEARCH.md)、[`docs/CHECKIN_RESEARCH.md`](docs/CHECKIN_RESEARCH.md)、
-[`docs/CODEARTS_SESSION.md`](docs/CODEARTS_SESSION.md)；与本机自研的 `codearts2api` 的关系见 [`PROGRESS.md`](PROGRESS.md)。
-路由、调度、存储、三种 wire API 与前端均为独立实现。
+[`docs/CODEARTS_SESSION.md`](docs/CODEARTS_SESSION.md)。路由、调度、存储、三种 wire API 与前端均为独立实现。
 
 ## 许可证
 
