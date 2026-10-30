@@ -215,7 +215,9 @@ impl CheckinExecutor for WorkbuddyCheckinExecutor {
         let credential = self.credential(authorization)?;
         let status = self.status(&credential).await?;
         if !status.active {
-            return Ok(CheckinOutcome::Unsupported);
+            return Err(GatewayError::unsupported(
+                "WorkBuddy reports no active check-in programme for this account",
+            ));
         }
         if status.today_checked_in {
             return Ok(CheckinOutcome::AlreadyCheckedIn {
@@ -499,13 +501,16 @@ mod tests {
             reqwest::Client::new(),
             &server.base_url,
         );
-        assert!(matches!(
-            executor
-                .checkin(&request(Region::Cn), &context(Region::Cn))
-                .await
-                .unwrap(),
-            CheckinOutcome::Unsupported
-        ));
+        let error = executor
+            .checkin(&request(Region::Cn), &context(Region::Cn))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, crate::error::ErrorKind::Unsupported);
+        assert!(
+            error.message.contains("no active check-in programme"),
+            "{}",
+            error.message
+        );
         assert_eq!(
             executor
                 .check_status(&request(Region::Cn), &context(Region::Cn))

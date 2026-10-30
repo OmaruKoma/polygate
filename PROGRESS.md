@@ -4657,3 +4657,45 @@ $ POST /v1/chat/completions  model=workbuddy-cn::space-bunny  stream=true
   工具调用、额度数值、签到最后结果仍为 MockVerified / 未触发。
 - 额度与签到需在管理台点一次「刷新额度」「执行签到」后，从账号详情与 `checkin_runs` 确认。
 - WorkBuddy Intl 仍无真实登录，维持 unavailable。
+
+## 53. WorkBuddy 签到“不支持”改带原因（2026-10-30，完成）
+
+### 53.1 现象
+
+§52 修好 Provider 注册后，账号详情仍显示「最近签到：不支持」。查库确认这是**旧记录**：
+`checkin_runs` 里 WorkBuddy 只有一行 `2026-10-30T03:20:26Z`、`unsupported`、
+`provider does not support check-in`，早于 03:22:38 的配置生效重启；重启后没有任何新的签到记录
+（`checkin_schedules` 为空，签到只会由点击触发）。
+
+### 53.2 改动
+
+`WorkbuddyCheckinExecutor::checkin` 在 `status.active == false` 时原本返回
+`CheckinOutcome::Unsupported`，与“Intl 不支持”共用同一句泛化文案，操作者无法判断是
+配置问题还是上游活动未开放。现改为返回
+`GatewayError::unsupported("WorkBuddy reports no active check-in programme for this account")`，
+由 `CheckinService` 记录同一条 `unsupported` 状态但使用该具体文案
+（`src/checkin/model.rs:493` 把 `ErrorKind::Unsupported` 映射为 `unsupported` 状态与类别）。
+`check_status` 早已是这条文案，两处现在一致。
+
+测试 `an_inactive_programme_is_unsupported` 改为断言错误种类与文案。
+
+### 53.3 验证
+
+```text
+$ cargo clippy --all-targets -- -D warnings   → 通过
+$ cargo test --workspace                      → 652 passed
+$ cargo zigbuild --release --target aarch64-unknown-linux-musl → 成功（10,983,040 B）
+```
+
+新二进制已替换路由器 `/usr/bin/polygate`（md5 `ba7514db9e37bd3577a92a64cadee053`），
+服务 `running`，`/health` 200。
+
+### 53.4 未验证
+
+WorkBuddy CN 签到的真实结果仍未触发（需要管理台点击）。三种可能的结果与含义：
+
+| 结果 | 含义 |
+| --- | --- |
+| `succeeded` / `already_checked_in` | 领取成功或今天已领 |
+| `unsupported` + `no active check-in programme` | 上游对该账号没有开启签到活动（账号/套餐侧，不是网关问题） |
+| `failed` + `reward claim is disabled` | 配置里 `checkin.claim_enabled` 不是 `true` |
