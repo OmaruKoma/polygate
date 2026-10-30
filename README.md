@@ -39,6 +39,7 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 - [架构](#架构)
 - [运行时占用](#运行时占用)
 - [部署](#部署)
+- [配置速查](#配置速查)
 - [安全默认值](#安全默认值)
 - [已知限制](#已知限制)
 - [文档](#文档)
@@ -306,6 +307,49 @@ IPQ6000 / MT7986 / IPQ807x 等 Cortex-A53 平台可直接运行。procd 启动�
 cargo install cargo-zigbuild --locked
 cargo zigbuild --release --target aarch64-unknown-linux-musl
 ```
+
+## 配置速查
+
+几个常用的开关，完整注释见 [`config.example.toml`](config.example.toml)。
+
+| 配置项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `server.listen` | `127.0.0.1:8787` | 监听地址；公网部署请保持回环，交给反代 |
+| `server.public_url` | 空 | 反代后的公网地址；决定管理台 Origin 校验与 Cookie 的 `Secure` |
+| `server.trust_proxy` | `false` | 是否信任 `X-Forwarded-For` / `X-Forwarded-Proto`（只在反代同机时开） |
+| `server.max_body_bytes` | 16 MiB | 请求体上限 |
+| `server.request_timeout_secs` | 600 | 单次请求超时（含长输出） |
+| `server.cors_origins` | 空 | 浏览器跨域白名单；空 = 仅同源 |
+| `auth.api_keys` / `POLYGATE_API_KEY` | 必填 | 数据面网关 key，≥16 字符，可多把 |
+| `admin.setup_local_only` | `true` | 首次初始化只允许 loopback（服务器上用 SSH 隧道做） |
+| `admin.secure_cookie` | 跟随 `public_url` | 强制会话 Cookie 带 `Secure` |
+| `admin.allowed_origins` | 空 | 额外允许的管理台 Origin |
+| `metrics.request_logs` | `false` | 是否把每次请求写进 `request_logs` |
+| `metrics.log_retention_days` | 空 | 日志自动保留天数；启动时与每 6 小时清理，空 = 不自动清理 |
+| `scheduler.strategy` | `smooth_weighted_round_robin` | `round_robin` / `smooth_weighted_round_robin` / `least_connections` |
+| `scheduler.quota_min_ratio` | `0.0` | 已知额度低于该比例时排除账号；`unknown` 永不排除 |
+| `scheduler.cooldown_base_secs` / `cooldown_max_secs` | 30 / 600 | 失败冷却的起点与上限 |
+| `scheduler.session_ttl_secs` | 86400 | 会话粘性 TTL |
+| `database.max_connections` | 4 | SQLite 连接池（上限 8） |
+
+Provider 级开关写在对应 `[[providers]]` 下：
+
+```toml
+[[providers]]
+kind = "codearts"
+region = "cn"
+name = "CodeArts CN"
+verification = "verified"          # 控制台徽标：verified / experimental / unsupported / unavailable / mock
+
+  [providers.options]
+  "checkin.claim_enabled" = "true" # 允许每日签到（默认关闭，写入型操作需显式开启）
+```
+
+- `checkin.claim_enabled`：只对支持签到的 Provider 生效；关闭时签到返回 `Unsupported`。
+- WorkBuddy 的 `"client.identity" = "impersonate"`：Intl 门户会拒绝缺少官方客户端头族的请求。
+- `verification` 只是展示标记，不会改变调度行为；是否真的实测过由你自己负责。
+
+改配置需要重启进程生效（没有热加载），`polygate doctor --config <path>` 可以先做一次离线校验。
 
 ## 安全默认值
 
