@@ -43,7 +43,7 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 - [已知限制](#已知限制)
 - [文档](#文档)
 - [开发](#开发)
-- [参考项目](#参考项目)
+- [致谢](#致谢)
 - [许可证](#许可证)
 
 ## 截图
@@ -58,8 +58,8 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | 模型别名与按 Provider 分组的原生模型 | 账号凭据状态与额度（账号名已打码） |
 | <img src="docs/images/checkins.png" width="440" alt="签到管理"> | <img src="docs/images/logs.png" width="440" alt="请求日志"> |
 | 每日签到：成功 / 今日已签 / 失败原因 | 请求日志只存元数据，不含提示词与凭据 |
-| <img src="docs/images/settings.png" width="440" alt="系统设置"> | <img src="docs/images/login.png" width="440" alt="登录页"> |
-| Provider 接入状态与能力矩阵 | 管理员登录（Argon2id + HttpOnly 会话） |
+| <img src="docs/images/usage.png" width="440" alt="用量统计"> | <img src="docs/images/login.png" width="440" alt="登录页"> |
+| 用量统计：请求数、输入/输出 tokens | 管理员登录（Argon2id + HttpOnly 会话） |
 
 ## 特性
 
@@ -98,25 +98,40 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | Provider | Region | 认证方式 | 状态 |
 | --- | --- | --- | --- |
 | CodeArts（华为云） | CN | 浏览器 OAuth + STS / DPoP 续期 | **LiveVerified** |
-| CodeArts（华为云） | Intl | 同上 | MockVerified（Intl 账号可授权，上游限制见 PROGRESS） |
+| CodeArts（华为云） | Intl | 同上 | **LiveVerified** |
 | Qoder（阿里） | CN | OAuth + COSY 网关 | **LiveVerified** |
-| Qoder（阿里） | Intl | 同上 | **LiveVerified**（额度在 Intl 仍可能为 unknown） |
+| Qoder（阿里） | Intl | 同上 | **LiveVerified** |
+| WorkBuddy（腾讯） | CN | 设备码 / 登录态 | **LiveVerified** |
+| WorkBuddy（腾讯） | Intl | 同上 | **LiveVerified** |
 | Loomy（讯飞） | CN | 导入桌面端会话（14 天） | **LiveVerified** |
-| WorkBuddy（腾讯） | CN / Intl | 设备码 / 登录态 | MockVerified |
-| TRAE（字节） | CN | 登录态 | MockVerified |
-| OfficeAce（华为 AgentArts） | CN | 华为云授权（PKCE + DPoP + STS） | MockVerified |
+| OfficeAce（华为 AgentArts） | CN | 华为云授权（PKCE + DPoP + STS） | **LiveVerified** |
+| TRAE（字节） | CN | 登录态 | MockVerified（无真实账号） |
 | Mock | — | 无 | 仅测试与本地演示 |
+
+在软路由上的实际部署里，除 TRAE 外的每个 Provider 都有真实账号完成授权：
+
+| 已用真实账号确认的项 | Provider |
+| --- | --- |
+| 授权 | CodeArts CN/Intl、Qoder CN/Intl、WorkBuddy CN/Intl、Loomy、OfficeAce |
+| 模型目录 | CodeArts CN（10）、Qoder CN/Intl（11/15）、WorkBuddy CN/Intl（15/23）、Loomy（10）、OfficeAce（24） |
+| 对话（网关日志 200） | CodeArts CN、WorkBuddy CN（含 SSE）、Loomy |
+| 额度 | CodeArts CN、Qoder CN、Loomy、OfficeAce |
+| 每日签到 | Qoder CN/Intl（+100 credits）、WorkBuddy CN（+100 credits） |
+
+CodeArts Intl 的授权成功但目录发现为 0，签到被上游额度策略拒绝（`TM.00001005`），
+属于上游账号状态，不是协议问题。
 
 状态含义：
 
 | 状态 | 含义 |
 | --- | --- |
-| **LiveVerified** | 用真实账号端到端验证过（授权、模型发现、对话、额度中已验证的部分） |
+| **LiveVerified** | 该 Provider 已用真实账号完成授权，并至少验证了模型目录、对话、额度、签到中的一项 |
 | MockVerified | 协议已实现，只用本地确定性 Mock 服务器验证过，未向真实上游发过请求 |
 | Unsupported | 上游不提供该能力，明确不实现 |
 | CompatibilityGap | 上游接口存在但行为不兼容，已在文档中记录 |
 
-> **MockVerified ≠ LiveVerified**。逐项能力与未验证项见 [`PROGRESS.md`](PROGRESS.md)。
+> **MockVerified ≠ LiveVerified**。逐项能力与未验证项见 [`PROGRESS.md`](PROGRESS.md)：
+> TRAE 没有真实账号；Intl 的额度、部分签到与工具调用仍可能返回 unknown/Unsupported。
 >
 > 明确不支持，也不会加入：CodeBuddy、ZCode、OpenCode Zen。
 
@@ -280,7 +295,9 @@ cargo zigbuild --release --target aarch64-unknown-linux-musl
 - **单实例**：调度器状态与 SQLite 写锁都在进程内，不支持多实例共享同一个数据库。
 - **图片与多模态输入未验证**：能力矩阵里的 vision 只表示上游声明支持，未做真实请求验证。
 - **签到需要显式开启**：`checkin.claim_enabled` 默认关闭；是否允许自动化由操作者对该上游负责。
-- OfficeAce / WorkBuddy / TRAE 目前只有 Mock 验证；Intl 账号的部分能力受上游行为影响。
+- **TRAE 尚无真实账号**：协议、刷新、额度与签到只经过 Mock 验证，状态保持 MockVerified。
+- **Intl 的部分能力受上游影响**：CodeArts Intl 的签到会被上游额度策略拒绝，Qoder Intl 的额度
+  可能仍是 `unknown`，WorkBuddy Intl 的签到为 `Unsupported`。
 
 ## 文档
 
@@ -308,20 +325,29 @@ cargo fmt --check
 
 测试不依赖真实网络与真实凭据，Mock 上游全部确定性。
 
-## 参考项目
+## 致谢
 
-本项目在协议事实与设计结论上参考了这两个 MIT 项目，**没有复制它们的代码**：
+PolyGate 的协议事实来自这些项目的一手实践。没有它们，每个 Provider 都要从零逆向一遍：
 
-| 项目 | 参考的部分 |
-| --- | --- |
-| [RobbsLuo/Coding2API](https://github.com/RobbsLuo/Coding2API) | 各 Provider 的协议事实：CodeArts 会话槽位与 `TM.00001041` 并发错误、签到端点与额度字段、WorkBuddy / TRAE / OfficeAce 的请求头族、签名派生与事件格式 |
-| [chengzhi-c/dsh-wtq-pool](https://github.com/chengzhi-c/dsh-wtq-pool) | 账号池设计：槽位持久化、延迟开放重试、额度分组；Web UI 的视觉语言（深灰分层、青绿强调、细边框、胶囊按钮） |
+| 项目 | 作者 | 参考内容 |
+| --- | --- | --- |
+| [RobbsLuo/Coding2API](https://github.com/RobbsLuo/Coding2API) | RobbsLuo | 各 Provider 的协议事实：CodeArts 会话槽位与 `TM.00001041` 并发错误、签到端点与额度字段、WorkBuddy / TRAE / OfficeAce 的请求头族、签名派生与事件格式 |
+| [Patrick130306/loomy2api](https://github.com/Patrick130306/loomy2api) | Patrick130306 | 讯飞 Loomy 桌面端协议：14 天会话结构、`traceparent` 头族、模型目录、points 账本与 SSE 事件 |
+| [chengzhi-c/dsh-wtq-pool](https://github.com/chengzhi-c/dsh-wtq-pool) | chengzhi-c | 账号池设计：槽位持久化、延迟开放重试、额度分组；Web UI 的视觉语言（深灰分层、青绿强调、细边框、胶囊按钮） |
+| `codearts2api`（未开源） | 本项目作者 | CodeArts 适配的直接前作：会话槽位、签到流程与计费字段的第一手实现；PolyGate 在此基础上重写为 Rust，并补齐多 Provider 与调度层 |
+
+参考的细节值得单独说一句：Coding2API 把 CodeArts 的槽位并发错误、签到端点与 OfficeAce
+的双签名链路讲清楚了；loomy2api 从官方 Electron 客户端 0.9.38 里整理出了 Loomy 的完整
+协议文档；dsh-wtq-pool 给出了账号池该有的样子。PolyGate 只吸收协议事实与设计结论，
+**没有复制它们的代码**，路由、调度、存储、三种 wire API 与前端均为独立实现。
 
 审计过程与逐条结论见 [`docs/RESEARCH.md`](docs/RESEARCH.md)、[`docs/CHECKIN_RESEARCH.md`](docs/CHECKIN_RESEARCH.md)、
-[`docs/CODEARTS_SESSION.md`](docs/CODEARTS_SESSION.md)。路由、调度、存储、三种 wire API 与前端均为独立实现。
+[`docs/CODEARTS_SESSION.md`](docs/CODEARTS_SESSION.md)、[`docs/LOOMY_MIGRATION.md`](docs/LOOMY_MIGRATION.md)。
 
 ## 许可证
 
 [MIT](LICENSE)。依赖均为 MIT / Apache-2.0 / BSD / Zlib / ISC 等宽松许可（含多许可选项）。
-上述参考项目均为 MIT（Copyright 2026 Hongsheng Luo、chengzhi-c）；本项目只吸收协议事实与
-设计结论，未包含其代码，因此不附带其版权声明。
+Coding2API、loomy2api、dsh-wtq-pool 均为 MIT（Copyright 2026 各自作者）；本项目只吸收协议
+事实与设计结论，未包含其代码，因此不附带其版权声明。`codearts2api` 为同作者作品，若复用其
+代码需保留原版权声明并在 `NOTICE` 中标注。
+
