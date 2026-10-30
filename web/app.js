@@ -1159,6 +1159,7 @@
   async function renderLogs(container) {
     const data = await api("/admin/api/logs?limit=200");
     const items = data.items || [];
+    const retention = Number(data.retention_days) > 0 ? Number(data.retention_days) : null;
     container.innerHTML = `
       <div class="section-head">
         <h2>请求日志</h2>
@@ -1167,11 +1168,13 @@
       <div class="card">
         <h2>清理策略</h2>
         <div class="inline-form">
-          <label>保留天数<input id="log-days" type="number" min="1" value="30"></label>
+          <label>保留天数<input id="log-days" type="number" min="1" value="${retention || 30}"></label>
           <button class="btn small" id="log-purge">清理更早记录</button>
           <button class="btn small danger" id="log-clear">清空全部</button>
         </div>
-        <p class="hint">建议保留 7–30 天；开启自动清理需要外部定时任务调用清理接口。</p>
+        <p class="hint">${retention
+          ? `自动清理已开启：启动时和每 6 小时删除 ${retention} 天前的记录（配置项 metrics.log_retention_days）。`
+          : "未开启自动清理：在 [metrics] 设置 log_retention_days 后重启生效；下方按钮按输入天数手动清理。"}</p>
       </div>
       ${items.length
         ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>Provider / 账号</th><th>模型</th><th>API</th><th>状态</th><th>错误</th><th>延迟</th><th>Tokens</th></tr></thead><tbody>

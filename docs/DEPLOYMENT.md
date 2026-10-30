@@ -162,7 +162,10 @@ install -m 0600 /var/lib/polygate/master.key /backup/master.key
 - 敏感值（token、cookie、Authorization、AK/SK）在日志与错误体中自动脱敏。
 - `GET /health` 返回 `{"status":"ok","version":"..."}`，可作为存活探针。
 - 管理台仪表盘展示 24h 成功率、平均延迟与最近错误；详细元数据在“请求日志”。
-- 请求日志会持续增长，建议由外部 cron 调用清理接口：
+- 请求日志保留：在 `[metrics]` 设置 `log_retention_days = 30`，网关在启动时和每 6 小时
+  删除超过该天数的记录；`request_logs = false` 时不写日志，保留任务也不启动。留空表示
+  不自动清理，只接受管理台「请求日志」页的手动清理。
+- 需要立即清理时仍可调用管理接口（需要管理员会话与 CSRF）：
 
 ```bash
 curl -X POST https://gateway.example.com/admin/api/logs/purge \

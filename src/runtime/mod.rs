@@ -17,12 +17,14 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Router;
+use chrono::Utc;
 use serde::Deserialize;
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::account_service::{AccountCredentialStore, AccountService, AuthorizationContext};
 use crate::admin::{self, AdminState};
@@ -219,6 +221,7 @@ impl Gateway {
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> Result<(), GatewayError> {
         let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+        let retention_task = self.spawn_log_retention(stop_rx.clone());
         let scheduler = self.checkin_scheduler.clone();
         let scheduler_task = tokio::spawn(async move {
             let mut stop_rx = stop_rx;
@@ -238,9 +241,44 @@ impl Gateway {
         if let Err(error) = scheduler_task.await {
             tracing::warn!(error = %error, "check-in scheduler task failed");
         }
+        if let Some(task) = retention_task {
+            if let Err(error) = task.await {
+                warn!(error = %error, "request-log retention task failed");
+            }
+        }
         info!("http server stopped; closing database pool");
         self.storage.close().await;
         result.map_err(|e| GatewayError::internal(format!("http server failed: {e}")))
+    }
+
+    /// Purge request logs older than `metrics.log_retention_days` at startup and
+    /// every six hours. Disabled when the option is unset or request logging is
+    /// off; a zero value is rejected during config validation.
+    fn spawn_log_retention(
+        &self,
+        mut stop: tokio::sync::watch::Receiver<bool>,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let days = self.config.metrics.log_retention_days?;
+        if !self.config.metrics.request_logs {
+            return None;
+        }
+        let storage = Arc::clone(&self.storage);
+        Some(tokio::spawn(async move {
+            loop {
+                let before = Utc::now() - chrono::Duration::days(i64::from(days));
+                match storage.request_logs().purge_before(before).await {
+                    Ok(deleted) if deleted > 0 => {
+                        info!(deleted, days, "purged request logs past retention");
+                    }
+                    Ok(_) => {}
+                    Err(error) => warn!(error = %error, "request-log retention purge failed"),
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(6 * 3600)) => {}
+                    _ = stop.wait_for(|stop| *stop) => break,
+                }
+            }
+        }))
     }
 }
 

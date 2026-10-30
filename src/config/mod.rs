@@ -152,6 +152,8 @@ pub struct MetricsConfig {
     pub enabled: bool,
     /// Include per-request rows in `GET /admin/logs`.
     pub request_logs: bool,
+    /// Delete request-log rows older than this many days. Unset keeps them.
+    pub log_retention_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -650,6 +652,11 @@ impl Config {
         self.server.socket_addr()?;
         self.logging.validate()?;
         self.validate_gateway_keys()?;
+        if matches!(self.metrics.log_retention_days, Some(0)) {
+            return Err(GatewayError::config(
+                "metrics.log_retention_days must be at least 1 (omit it to keep logs)",
+            ));
+        }
         if self.auth.admin_session_ttl_hours == 0 {
             self.auth.admin_session_ttl_hours = 24;
         }
@@ -824,6 +831,20 @@ api_keys = ["toml-key-0123456789"]
         let keys = cfg.gateway_keys();
         assert!(keys.contains(&"toml-key-0123456789".to_string()));
         assert!(keys.contains(&"env-key-0123456789abcdef".to_string()));
+    }
+
+    #[test]
+    fn log_retention_days_must_be_positive() {
+        let err =
+            load_with("[metrics]\nlog_retention_days = 0\n", &[]).expect_err("zero retention");
+        assert_eq!(err.kind, ErrorKind::Config);
+        assert!(err.message.contains("log_retention_days"), "{err}");
+
+        let config = load_with("[metrics]\nlog_retention_days = 7\n", &[]).expect("valid");
+        assert_eq!(config.metrics.log_retention_days, Some(7));
+
+        let config = load_with("", &[]).expect("unset");
+        assert_eq!(config.metrics.log_retention_days, None);
     }
 
     #[test]

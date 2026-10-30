@@ -471,7 +471,10 @@ pub async fn request_logs(
                     })
                 })
                 .collect();
-            json_ok(json!({"items": items}))
+            json_ok(json!({
+                "items": items,
+                "retention_days": state.settings.log_retention_days,
+            }))
         }
         Err(error) => json_error(&error),
     }

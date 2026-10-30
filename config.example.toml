@@ -86,6 +86,9 @@ session_cache_capacity = 10000
 [metrics]
 enabled = true
 request_logs = false
+# Delete request-log rows older than this many days. Applied at startup and
+# every six hours; omit it to keep rows until they are purged from the panel.
+# log_retention_days = 30
 
 # Real providers are added in later stages. Until then only the mock provider
 # exists, and it is never reported as verified. The zero-config default mock can

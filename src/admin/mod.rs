@@ -67,6 +67,8 @@ pub struct AdminSettings {
     pub setup_local_only: bool,
     pub login_max_failures: usize,
     pub login_window: Duration,
+    /// Request-log retention in days; `None` keeps rows until purged by hand.
+    pub log_retention_days: Option<u32>,
     pub codearts: LoginConfig,
     pub officeace: crate::providers::officeace::login::LoginConfig,
 }
@@ -89,6 +91,7 @@ impl AdminSettings {
             setup_local_only: admin.setup_local_only,
             login_max_failures: admin.login_max_failures as usize,
             login_window: Duration::from_secs(admin.login_window_secs),
+            log_retention_days: config.metrics.log_retention_days,
             codearts: LoginConfig {
                 client_id: admin.codearts_client_id.clone(),
                 uri_scheme: admin.codearts_uri_scheme.clone(),

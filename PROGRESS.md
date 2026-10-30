@@ -5061,3 +5061,18 @@ POST /admin/api/accounts/{id}/quota      → unknown（"statistics response has 
 
 路由器实测（10.0.0.1，sha256 `2d61b1d0…c96e78b2`）：
 `codearts-intl` → 2 个（GLM-5.1/GLM-5.2）、`codearts-cn` → 10 个、`officeace-cn` → 24 个。
+
+## 61. 请求日志自动保留（2026-10-30，完成）
+
+新增配置 `[metrics] log_retention_days = N`（默认不设置 = 不自动清理）：
+
+- 网关在启动时与每 6 小时调用 `request_logs().purge_before(now - N 天)`；
+  `request_logs = false` 时不写日志，保留任务也不启动；`0` 在配置校验阶段直接报错。
+- `/admin/api/logs` 响应新增 `retention_days`，管理台「请求日志」页据它显示
+  「自动清理已开启：启动时和每 6 小时删除 N 天前的记录」，输入框默认值同步为 N。
+- 手动清理接口 `/admin/api/logs/purge` 保留不变。
+
+验证：`cargo test --lib` 747 passed（新增 1 个配置校验测试），fmt/clippy 通过。
+路由器（10.0.0.1，sha256 `ebacb84c…0217a169`）已开启 `request_logs = true` +
+`log_retention_days = 30`：`/admin/api/logs` 返回 `retention_days: 30`，新请求写入日志
+（codearts-intl GLM-5.2 200），页面提示与输入框均为 30。
