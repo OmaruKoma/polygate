@@ -187,6 +187,11 @@ Linux 下 RSS 通常还更低（10–20 MB）。
 Linux 部署（systemd / Docker / 反代 / 备份 / 升级）见 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)；
 现成的单元文件与镜像定义在 [`deploy/`](deploy/)。
 
+**软路由 / ARM 盒子**：提供 `aarch64-unknown-linux-musl` 静态产物（10.5 MiB，gzip 4.7 MiB），
+不依赖路由器 libc，IPQ6000 / MT7986 / IPQ807x 等 Cortex-A53 平台可直接运行。procd 启动脚本与
+环境变量模板在 [`deploy/openwrt/`](deploy/openwrt/)，步骤见
+[`docs/DEPLOYMENT.md` §12](docs/DEPLOYMENT.md#12-openwrt--kwrtaarch64-软路由)。
+
 ## 安全默认值
 
 - 只监听 `127.0.0.1`；公网部署必须置于 TLS 反向代理之后

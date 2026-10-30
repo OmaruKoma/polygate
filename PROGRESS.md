@@ -4263,3 +4263,72 @@ $ git grep -nIE "Bearer [A-Za-z0-9._-]{20,}"                （无输出）
 - `docs/CODEARTS_SESSION.md` 保留本人 `codearts2api` 的公开远端地址与 HEAD：那是公开仓库信息，
   不属于本机信息，保留用于溯源。
 - 此后文档规范：涉及本机时一律写 `~/<project>`、`<repo>`、`<local>/<path>`，不出现盘符与用户名。
+
+## 46. aarch64 软路由构建（IPQ6000 / KWRT，2026-10-30，完成）
+
+### 46.1 目标
+
+给 IPQ6000（4×Cortex-A53 @1.2 GHz，OpenWrt / KWRT，musl）出一份静态二进制。
+路由器没有 Rust 工具链、libc 版本不可控，因此必须是 `aarch64-unknown-linux-musl` 静态链接。
+
+### 46.2 环境与步骤（构建机 Windows 10 x64）
+
+| 组件 | 版本 | 说明 |
+| --- | --- | --- |
+| rustc / cargo | 1.98.1 | 由 `rust-toolchain.toml` 固定 |
+| 目标 | `aarch64-unknown-linux-musl` | `rustup target add` |
+| zig | 0.17.0 | 作为 C 交叉编译器与链接器（ring / 内置 sqlite3 需要 C 工具链） |
+| cargo-zigbuild | 0.24.0 | 自动把 zig 注入 `CC`/`AR`/linker |
+
+```bash
+rustup target add aarch64-unknown-linux-musl
+cargo zigbuild --release --target aarch64-unknown-linux-musl
+```
+
+未改动任何源码：`rustls`（ring）与 `libsqlite3-sys`（bundled）都由 zig 交叉编译通过，
+仓库里没有 `cfg(windows)` 之外的平台分支（`cfg(unix)` 仅用于 0600 权限设置，静态 musl 下正常）。
+
+### 46.3 产物
+
+```text
+target/aarch64-unknown-linux-musl/release/polygate
+  ELF64 LE, e_machine=183 (AArch64), ET_EXEC
+  PT_INTERP: none      → 静态链接
+  DT_NEEDED: none
+  10,963,376 字节（10.46 MiB）；gzip -9 后 4,968,367 字节
+  sha256 e288a341a51e48a8de4841b9589485f3b7e4a22734f97d89d70bc403a0d8403d
+```
+
+### 46.4 运行验证（qemu 用户态，非真机）
+
+用 `qemu-aarch64-static 7.2.0` 在 WSL Debian 下执行同一份产物：
+
+| 检查 | 结果 |
+| --- | --- |
+| `polygate --help` | 正常输出 `serve` / `doctor` / `config-example` |
+| `polygate config-example` | 正常输出完整配置 |
+| `serve`（mock provider，临时 data dir） | 监听成功，启动日志正常 |
+| `GET /health` | `{"status":"ok","version":"0.1.0"}` |
+| `GET /v1/models` | 返回 `mock-chat` / `mock-reasoner` 目录 |
+| `POST /v1/chat/completions`（mock） | 200，`content: "mock: hi"`，usage 正常 |
+| `GET /`（管理台） | 200，内嵌前端正常返回 |
+| SQLite 迁移 0001–0008 | 在 ext4 路径下自动执行成功 |
+
+WSL 里的 HTTP 探测用 bash `/dev/tcp` 完成（该镜像无 curl），未安装任何额外运行库。
+
+### 46.5 交付物
+
+| 文件 | 用途 |
+| --- | --- |
+| `deploy/openwrt/polygate.init` | procd 启动脚本（respawn、nofile 4096、读取 `polygate.env`、配置变更触发重启） |
+| `deploy/openwrt/polygate.env.example` | `POLYGATE_API_KEY` / `POLYGATE_MASTER_KEY` 模板 |
+| `docs/DEPLOYMENT.md` §12 | 传输、自启、SSH 隧道首次初始化、SQLite 落盘位置、资源预期 |
+
+### 46.6 未验证
+
+- **未在真实 IPQ6000 / KWRT 上运行**：本次没有该设备访问，只做了 qemu 用户态验证。
+  内核版本、`/overlay` 文件系统行为、procd 生命周期需在真机确认。
+- 内存数字仍是 x86_64 release 实测（§41、README「运行时占用」）的推断：A53 上预计 15–20 MB，
+  未实测。
+- 静态 musl 不读取系统 `openssl`，TLS 完全由 rustls 自带；若路由器有透明代理/证书替换，
+  需要自行保证出网路径可用。

@@ -1,0 +1,52 @@
+#!/bin/sh /etc/rc.common
+# PolyGate — procd service for OpenWrt / KWRT (aarch64 musl build).
+# Install:
+#   scp polygate-0.1.0-aarch64-linux-musl root@router:/usr/bin/polygate
+#   chmod +x /usr/bin/polygate
+#   scp polygate.init root@router:/etc/init.d/polygate
+#   chmod +x /etc/init.d/polygate
+#   /etc/init.d/polygate enable && /etc/init.d/polygate start
+
+START=95
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/bin/polygate
+CONF=/etc/polygate/config.toml
+DATA=/etc/polygate
+ENVFILE=/etc/polygate/polygate.env
+
+start_service() {
+	[ -x "$PROG" ] || { logger -t polygate "binary not executable: $PROG"; return 1; }
+	[ -f "$CONF" ] || { logger -t polygate "config missing: $CONF"; return 1; }
+
+	local envargs=""
+	if [ -f "$ENVFILE" ]; then
+		local line
+		while IFS= read -r line; do
+			case "$line" in
+				''|'#'*) continue ;;
+			esac
+			envargs="$envargs $line"
+		done < "$ENVFILE"
+	fi
+
+	procd_open_instance polygate
+	procd_set_param command "$PROG" --config "$CONF" --data-dir "$DATA" serve
+	procd_set_param env $envargs
+	procd_set_param file "$CONF"
+	procd_set_param respawn 3600 5 5
+	procd_set_param limits nofile="4096 4096"
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+reload_service() {
+	stop
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger polygate
+}
