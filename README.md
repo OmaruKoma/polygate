@@ -56,10 +56,12 @@ SQLite 持久化、账号调度、会话粘性、模型别名与请求日志。�
 | Qoder | OAuth + COSY 网关 | **LiveVerified**（CN 单账号） |
 | WorkBuddy | 设备码 / 登录态 | MockVerified（无真实账号） |
 | TRAE | 登录态 | MockVerified（无真实账号） |
+| Loomy（讯飞） | 导入桌面端会话（14 天） | **LiveVerified**（CN 单账号，2026-10-30） |
 | Mock | — | 仅用于测试与本地演示 |
 
 > **MockVerified ≠ LiveVerified**：WorkBuddy / TRAE 的协议、续期、额度与签到只经过本地
-> Mock 服务器验证，没有向真实上游发过请求。逐项状态见 [`PROGRESS.md`](PROGRESS.md)。
+> Mock 服务器验证，没有向真实上游发过请求。Loomy 的模型发现、Chat/SSE 与额度已用真实
+> 账号实测，但会话续期、工具调用与图片模型未验证。逐项状态见 [`PROGRESS.md`](PROGRESS.md)。
 >
 > 明确不支持、也不会加入：CodeBuddy、ZCode、OpenCode Zen。
 
@@ -210,6 +212,7 @@ Linux 部署（systemd / Docker / 反代 / 备份 / 升级）见 [`docs/DEPLOYME
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Linux 构建、systemd、Docker、反代、备份、升级 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 模块职责、依赖方向与技术决策 |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Provider 能力矩阵与协议差异 |
+| [`docs/LOOMY_MIGRATION.md`](docs/LOOMY_MIGRATION.md) | Loomy 接入：会话导入、协议头、能力与限制 |
 | [`docs/WEB_ADMIN.md`](docs/WEB_ADMIN.md) | 管理台使用说明 |
 | [`PROGRESS.md`](PROGRESS.md) | 里程碑、实测结果、未完成项与已知问题 |
 | [`AGENTS.md`](AGENTS.md) | 开发规范与安全红线 |

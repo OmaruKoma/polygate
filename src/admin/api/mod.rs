@@ -1268,3 +1268,82 @@ async fn load_account(state: &AdminState, id: &str) -> Result<Account, GatewayEr
         .await?
         .ok_or_else(|| GatewayError::bad_request("account not found"))
 }
+
+// ---------------------------------------------------------------------------
+// Loomy session import
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct LoomySessionRequest {
+    /// The 32-character login session copied from the client.
+    pub session: String,
+    #[serde(default)]
+    pub userid: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Unix seconds; defaults to 14 days from now (the documented lifetime).
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+/// Import a Loomy login session and probe it before storing anything.
+///
+/// The probe is `GET /models`, which is read-only: a rejected session is never
+/// written to the database, and a valid one is stored only through
+/// `CredentialService` (SecretBox + revision CAS).
+pub async fn import_loomy_session(
+    State(state): State<AdminState>,
+    Json(request): Json<LoomySessionRequest>,
+) -> Response {
+    let session = request.session.trim().to_string();
+    if session.len() < 16 || session.len() > 512 || session.chars().any(char::is_whitespace) {
+        return json_error(&GatewayError::bad_request(
+            "paste the Loomy session value only (one token, no spaces)",
+        ));
+    }
+    let key = ProviderKey::new(ProviderKind::Loomy, Region::Cn);
+    let Some(provider) = state.registry.get(&key) else {
+        return json_error(&GatewayError::new(
+            ErrorKind::NoCapacity,
+            "provider loomy is not enabled in the configuration; add a [[providers]] block with kind = \"loomy\" and restart",
+        ));
+    };
+    let candidate = crate::accounts::Credential::from_value(json!({
+        "session": session,
+        "userid": request.userid.clone().unwrap_or_default(),
+    }));
+    let models = match provider.list_models(&candidate).await {
+        Ok(models) if !models.is_empty() => models,
+        Ok(_) => {
+            return json_error(&GatewayError::new(
+                ErrorKind::NoCapacity,
+                "Loomy returned an empty model catalogue for this session",
+            ));
+        }
+        Err(error) => return json_error(&error),
+    };
+    let expires_at = request.expires_at.unwrap_or_else(|| {
+        chrono::Utc::now().timestamp() + crate::providers::loomy::region::SESSION_TTL_SECONDS
+    });
+    match account::persist_loomy_session(
+        &state,
+        session,
+        request.userid,
+        expires_at,
+        request.name.as_deref(),
+    )
+    .await
+    {
+        Ok(account) => json_ok(json!({
+            "account_id": account.id,
+            "name": account.name,
+            "external_id": account.external_id,
+            "expires_at": expires_at,
+            "models": models.len(),
+            // The model catalogue is discovered at startup; a new account only
+            // contributes models after a restart.
+            "restart_required": true,
+        })),
+        Err(error) => json_error(&error),
+    }
+}

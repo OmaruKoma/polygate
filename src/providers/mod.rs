@@ -33,12 +33,14 @@ mod registry;
 mod tests;
 
 pub mod codearts;
+pub mod loomy;
 pub mod profile;
 pub mod qoder;
 pub mod trae;
 pub mod workbuddy;
 
 pub use codearts::{ClientHeaders, CodeArtsHttp, CodeArtsProvider};
+pub use loomy::LoomyProvider;
 pub use trae::provider::TraeProvider;
 pub use workbuddy::provider::WorkbuddyProvider;
 

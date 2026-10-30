@@ -302,6 +302,10 @@ pub fn router(state: AdminState) -> Router {
             post(api::cancel_active_auth),
         )
         .route(
+            "/admin/api/auth/loomy/session",
+            post(api::import_loomy_session),
+        )
+        .route(
             "/admin/api/auth/codearts/start",
             post(api::start_codearts_auth),
         )

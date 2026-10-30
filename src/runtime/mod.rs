@@ -37,8 +37,9 @@ use crate::error::{ErrorKind, GatewayError};
 use crate::providers::profile::Identity;
 use crate::providers::qoder::provider::QoderProvider;
 use crate::providers::{
-    ClientHeaders, CodeArtsHttp, CodeArtsProvider, MockConfig, MockProvider, MockReply,
-    MockToolCall, ProviderKey, ProviderRegistry, TraeProvider, UpstreamModel, WorkbuddyProvider,
+    ClientHeaders, CodeArtsHttp, CodeArtsProvider, LoomyProvider, MockConfig, MockProvider,
+    MockReply, MockToolCall, ProviderKey, ProviderRegistry, TraeProvider, UpstreamModel,
+    WorkbuddyProvider,
 };
 use crate::quota::QuotaSnapshot;
 use crate::security::SecretBox;
@@ -287,6 +288,32 @@ fn build_registry(
                 )
                 .with_identity(identity(provider)?);
                 registry.register(Arc::new(qoder))?;
+            }
+            ProviderKind::Loomy => {
+                // One deployment only; a session issued for it is never valid
+                // anywhere else, so an `intl` entry is a configuration error.
+                if !crate::providers::loomy::region::supported(provider.region) {
+                    return Err(GatewayError::config(
+                        "provider loomy has no international deployment; use region = \"cn\"",
+                    ));
+                }
+                let client = reqwest::Client::new();
+                let loomy = match provider.base_url.as_deref() {
+                    Some(base) => LoomyProvider::with_base(
+                        provider.provider_id(),
+                        provider.region,
+                        provider.verification(),
+                        client,
+                        base,
+                    ),
+                    None => LoomyProvider::new(
+                        provider.provider_id(),
+                        provider.region,
+                        provider.verification(),
+                        client,
+                    ),
+                };
+                registry.register(Arc::new(loomy))?;
             }
             ProviderKind::Workbuddy => {
                 let client = reqwest::Client::new();

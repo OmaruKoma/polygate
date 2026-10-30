@@ -4747,3 +4747,110 @@ $ cargo zigbuild --release --target aarch64-unknown-linux-musl → 成功（10,9
 
 点击后的真实结果仍未触发。现在它会真正调用
 `/v2/billing/meter/checkin-activity-status`，结果三种分支见 §53.4。
+
+---
+
+## 55. Qoder 额度读取补齐展示路由（2026-10-30）
+
+### 55.1 问题
+
+Qoder Intl 账号授权后「额度」一直是 `未知`，即使点「刷新额度」也不会变。
+排查发现 `QoderProvider::quota` 只请求 `/api/v2/quota/usage`，且解析只接受顶层
+`userQuota` / `addOnQuota` 的 camelCase 形状。
+
+参考实现 dsh `src/qoder-client.ts:879-951` 显示额度有两条路由：
+`/sash/api/v2/me/usage`（IDE 面板同款，含按模型拆分的资源包）优先，失败才回退
+`/api/v2/quota/usage`；文档可能裸放、包在 `qoderUsage` 或 `data` 下，键可能是
+snake_case（`user_quota` / `add_on_quota`）。Intl 返回的是展示路由形状，于是解析为
+unknown。
+
+### 55.2 修改
+
+- `src/providers/qoder/quota.rs`：新增 `PRESENTATION_PATH = "/sash/api/v2/me/usage"`；
+  `parse_quota` 先解 `qoderUsage` / `data` 信封，再读 camelCase 或 snake_case 配额键。
+  仍然严格遵守“缺数字就是 unknown”，不从资源包或缺失字段推算。
+- `src/providers/qoder/provider.rs`：`quota` 先读展示路由，解析不出数字时回退到
+  `region::QUOTA_PATH`；两条都失败才把错误抛给调用方。
+- 测试：展示路由鉴权头、回退到窄路由、信封/snake_case 解析、只有资源包时保持 unknown。
+
+### 55.3 配置
+
+`/etc/polygate/config.toml` 的 `Qoder Intl` provider 打开
+`"checkin.claim_enabled" = "true"`（用户确认 Intl 有每日 +100 积分签到）；
+备份 `config.toml.bak6-20261030`。额度读取与签到是两条独立链路，
+`刷新额度` 不依赖签到。
+
+### 55.4 验证
+
+```text
+$ cargo fmt --check                              → 通过
+$ cargo clippy --all-targets -- -D warnings      → 通过
+$ cargo test                                     → 657 passed
+$ cargo zigbuild --release --target aarch64-unknown-linux-musl → 成功（10,983,808 B）
+```
+
+部署到路由器：sha256 `772a62a9…c26ce5d8a`，服务 `running`，监听 `10.0.0.1:8787`。
+旧二进制备份 `/usr/bin/polygate.bak-20261030-1202`。
+
+### 55.5 未验证
+
+真实 Intl 账号点「刷新额度」后是否能显示数字、以及签到 +100 是否成功领取，
+本次均未实测；两者都需要在面板触发后用真实上游返回确认。
+
+## 55. M16 — Loomy（讯飞）Provider：会话导入 + 聊天/额度实测（2026-10-30，完成）
+
+### 55.1 范围与来源
+
+参考 `Patrick130306/loomy2api`（MIT）的 `docs/PROTOCOL.md`（来自官方 Electron 客户端
+0.9.38），**只吸收协议事实，未复制代码**。新增 Provider `loomy`（仅 CN），
+不引入密码登录、不生成设备身份、不领取激活/邀请奖励。
+
+### 55.2 新增文件
+
+| 文件 | 内容 |
+| --- | --- |
+| `src/providers/loomy/region.rs` | 模型网关地址、`loomy-version`、14 天会话常量、区域校验 |
+| `src/providers/loomy/credential.rs` | 会话凭据（`session`/`accessToken`、`userid`/`uid`、秒/毫秒 `expires_at`） |
+| `src/providers/loomy/http.rs` | Bearer + `token` 双头、`traceparent`、错误分类、SSE 打开 |
+| `src/providers/loomy/models.rs` | 目录解析，按 `type == "chat"` 过滤图片模型 |
+| `src/providers/loomy/convert.rs` | `ChatRequest` ↔ OpenAI body、`reasoning_content`、工具调用 |
+| `src/providers/loomy/events.rs` | SSE 解码与 `StreamEvent` 翻译 |
+| `src/providers/loomy/quota.rs` | `points/records` → `credits`（`availableBalance` / `balance+daily`） |
+| `src/providers/loomy/provider.rs` | `Provider` 实现（认证探测、目录、额度、chat、chat_stream） |
+| `src/providers/loomy/tests.rs` | 9 个 mock 服务器测试 |
+
+接线：`ProviderKind::Loomy`（config）、`build_registry` 新分支（`intl` 直接报配置错误）、
+`POST /admin/api/auth/loomy/session`、`persist_loomy_session`、管理台 Loomy 子导航与
+"导入会话"弹窗。
+
+### 55.3 线上实测（真实账号，2026-10-30）
+
+```
+GET https://loomyad.xunfei.cn/api/v1/models        → 200，13 条（chat 10 + image 3）
+POST .../chat/completions spark-x2.6               → 200，reasoning_content，points_consumed:0
+GET  .../points/records                            → balance 7000 + daily 4953 = 11953
+
+本地实例（127.0.0.1:18081，loomy-cn）：
+POST /admin/api/auth/loomy/session                 → 200，account f372e685…，models 10
+GET  /v1/models                                    → 10 条 owned_by=loomy-cn
+POST /v1/chat/completions loomy-cn::spark-x2.6     → 200
+POST /v1/chat/completions loomy-cn::GLM-5.3-Flash  → SSE，reasoning delta 正常
+POST /admin/api/accounts/{id}/quota                → credits，remaining 11953
+```
+
+测试：`cargo test --workspace` → **690 passed**（新增 37 个 Loomy 相关），
+`cargo clippy --all-targets -- -D warnings` 与 `cargo fmt --check` 通过。
+
+### 55.4 已知限制
+
+- **模型目录只在启动时发现**：导入账号后需重启网关，`/v1/models` 才会出现 Loomy 模型。
+  导入接口返回 `restart_required: true`，界面提示重启。这是现有 `ModelCatalog` 的结构性
+  限制（所有 Provider 一致），热刷新未实现。
+- 会话 14 天过期且无 refresh token：过期后 `auth_status` = `Expired`，需重新导入。
+- 不导入 `userid` 时账号身份用会话哈希，换会话会新建账号而非轮换凭据。
+- 图片模型（`type == "image"`）不暴露；需 `/images/generations` 与多模态消息，未实现。
+- 工具调用已实现但未用真实请求验证；签到/领奖 Unsupported（每日额度由上游自动刷新）。
+
+### 55.5 未验证
+
+工具调用的真实上游行为、图片模型、Intl（不存在该部署）、多账号调度实测。

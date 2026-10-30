@@ -48,6 +48,18 @@
       pollInterval: 5000,
       autoCheckNote: "等待在官方页面完成授权，本页面会自动检查结果…",
     },
+    loomy: {
+      label: "Loomy",
+      authPath: "loomy",
+      siteNote:
+        "Loomy 没有浏览器授权入口：登录会话只能从官方桌面客户端的 auth-session.json 里取出（14 天有效、无刷新令牌）。PolyGate 只保存这个会话，不保存手机号或密码，也不生成设备身份。",
+      startLabel: "导入会话",
+      successToast: "Loomy 账号已导入",
+      supportsCheckin: false,
+      sessionImport: true,
+      cnLoginOnly: true,
+      regionHint: "Loomy 只有中国站一个部署，站点固定为 CN。",
+    },
     trae: {
       label: "TRAE",
       authPath: "trae",
@@ -430,7 +442,9 @@
       ${data.items.length ? accountsTable(data.items, provider) : `
         <div class="empty">
           <strong>还没有 ${provider.label} ${region === "cn" ? "CN" : "Intl"} 账号</strong>
-          点击“添加账号”，在官方 ${provider.label} 页面完成浏览器授权。
+          ${provider.sessionImport
+            ? "点击“添加账号”，导入桌面客户端的登录会话。"
+            : `点击“添加账号”，在官方 ${provider.label} 页面完成浏览器授权。`}
         </div>`}`;
 
     $$("#region-filter button").forEach((button) =>
@@ -515,7 +529,12 @@
           ? `<p class="hint">Qoder Intl 授权流程尚未用真实账号实测；失败时请改用 CN 站点。</p>`
           : ""}
         ${provider.cnLoginOnly
-          ? `<p class="hint">TRAE 仅 CN 站点提供已验证的授权入口；国际站凭据可在导入后刷新。</p>`
+          ? `<p class="hint">${esc(provider.regionHint || "TRAE 仅 CN 站点提供已验证的授权入口；国际站凭据可在导入后刷新。")}</p>`
+          : ""}
+        ${provider.sessionImport
+          ? `<label>登录会话<input id="flow-session" spellcheck="false" autocomplete="off" placeholder="32 位十六进制会话字符串"></label>
+             <label>用户 ID（可选）<input id="flow-userid" spellcheck="false" autocomplete="off" placeholder="填了就能把新会话绑到同一账号"></label>
+             <p class="hint">会话位于桌面客户端的 userData/auth-session.json，复制其中 session 的值即可。</p>`
           : ""}
         ${provider.needsDeviceIds
           ? `<label>machineId（32 位十六进制）<input id="flow-machine" maxlength="32" spellcheck="false" placeholder="与登录浏览器一致的 machineId"></label>
@@ -540,9 +559,38 @@
     modal.flowRegion = () => selected;
   }
 
+  async function importLoomySession(modal, provider) {
+    const status = $("#flow-status", modal);
+    const session = $("#flow-session", modal).value.trim();
+    const userid = $("#flow-userid", modal).value.trim();
+    const name = $("#flow-name", modal).value.trim();
+    if (!/^[0-9a-zA-Z._-]{16,512}$/.test(session)) {
+      status.textContent = "会话格式不对：应当是从 auth-session.json 复制出来的一整串字符，不含空格。";
+      return;
+    }
+    status.textContent = "正在向 Loomy 校验会话…";
+    try {
+      const result = await api("/admin/api/auth/loomy/session", {
+        method: "POST",
+        body: JSON.stringify({ session, userid: userid || null, name: name || null }),
+      });
+      toast(
+        `${provider.successToast}（${result.models} 个模型，重启网关后进入 /v1/models）`,
+        "ok",
+      );
+      closeModal();
+      renderRoute();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  }
+
   async function startAuthFlow(modal) {
     const provider = modal.provider || PROVIDERS[state.provider] || PROVIDERS.codearts;
     const status = $("#flow-status", modal);
+    if (provider.sessionImport) {
+      return importLoomySession(modal, provider);
+    }
     const region = provider.cnLoginOnly ? "cn" : modal.flowRegion();
     const name = $("#flow-name", modal).value.trim();
     const body = { region, name: name || null };

@@ -125,6 +125,7 @@
 | TRAE Intl | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（订阅计划，数值 Unknown；M14-E） | Unsupported | unavailable（无真实账号；OAuth 主机未验证，登录/签到 Unsupported） |
 | WorkBuddy CN | 已实现（M14-B；模型发现 + Chat/SSE Live Verified 2026-10-30） | 已实现（真实账号发现 15 个模型） | 已实现（Chat 非流式与 SSE 均已实测；工具调用 MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-C，MockVerified，未点刷新实测） | Unsupported（growth/checkin 不是 Agent Task API） | experimental（授权/模型/Chat 已 Live Verified；额度刷新与签到待管理台点击确认） |
 | WorkBuddy Intl | 已实现（MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（credits；M14-C，MockVerified） | Unsupported | unavailable（首条 system/会话头未适配；签到 Unsupported） |
+| Loomy CN | 已实现（会话导入；模型发现/Chat/SSE/额度 Live Verified 2026-10-30） | 已实现（真实账号 10 个 chat 模型） | 已实现（Live Verified；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified） | Unsupported（不做签到/领奖） | experimental（Chat/SSE/额度已实测；无 refresh，14 天需重导） |
 | CodeBuddy CN | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 | CodeBuddy Intl | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 

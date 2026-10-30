@@ -175,6 +175,15 @@ name = "Mock (development)"
 #   "checkin.claim_enabled" = "false" # Intl has no check-in
 #
 # [[providers]]
+# kind = "loomy"
+# region = "cn"                       # the only deployment; "intl" is rejected
+# enabled = true
+#
+# Import the session from the desktop client
+# (%LOCALAPPDATA%/../Public/Loomy/<id>/userData/auth-session.json) in the
+# admin panel; it is a 14-day bearer with no refresh token.
+#
+# [[providers]]
 # kind = "trae"
 # region = "cn"
 # enabled = true
