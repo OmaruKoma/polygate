@@ -5000,3 +5000,36 @@ $ cargo zigbuild --release --target aarch64-unknown-linux-musl → 成功（11,3
 路由器（10.0.0.1）：二进制 sha256 `1fc16361…618f2ec`，旧版备份
 `/usr/bin/polygate.bak-20261030-1450`；`doctor` 9 个 Provider 全部加载
 （含 officeace-cn），`/health` 200，`/admin/static/app.js` 已含 `nativeGroups`。
+
+## 58. 控制台截图、占用实测与 README 重写（2026-10-30，完成）
+
+### 58.1 截图
+
+对 `10.0.0.1:8787` 上运行的版本（9 Provider / 10 账号）用浏览器实拍 8 张，
+存 `docs/images/`：`login`、`dashboard`、`accounts`、`models`、`checkins`、
+`usage`、`logs`、`settings`。账号名由操作者手动打码后提交。
+
+### 58.2 占用实测（路由器，aarch64-musl）
+
+```text
+PID 28874，启动约 21 分钟后：
+VmRSS  18,160 kB   VmHWM 35,048 kB
+VmSize 36,636 kB   VmData 26,556 kB   Threads 8
+系统 MemTotal 928,484 kB
+```
+
+二进制 11,369,896 B（10.8 MiB）。
+
+### 58.3 隐私审查
+
+- 已跟踪文件中无 `D:\` / `C:\Users` / 工作目录名 / 用户名 / 邮箱 / token；
+  `.refs/`、`data/`、`*.db` 在 `.gitignore` 内。
+- `PROGRESS.md` 中 6 处真实账号昵称改为「账号 A / 账号 B」。
+- 截图不含地址栏、文件系统路径与环境变量；账号标识已打码。
+- 保留 `10.0.0.1`（RFC1918 私有地址，文档本就用它做示例）。
+
+### 58.4 README
+
+重写 `README.md`：目录、截图区、特性分组、9 Provider 状态表与状态词表、
+快速开始、客户端接入（Claude Code / Codex / Cursor / Cline / Continue）、
+架构图、软路由与 Windows 两组占用数据、部署、安全默认值、已知限制、文档索引。

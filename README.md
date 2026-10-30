@@ -10,56 +10,81 @@
   <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
 </p>
 
-<p align="center">多 Provider 账号池 + Coding Agent API 网关</p>
+<p align="center">
+多 Provider 账号池 + Coding Agent API 网关<br>
+<sub>一个 10 MB 的 Rust 二进制，把 9 个上游的账号池变成三个标准接口。</sub>
+</p>
 
 ---
 
-用一套加密保存的本地凭据池，向 Claude Code、Codex、Cursor、Cline、Continue 等客户端提供
-**OpenAI Chat Completions**、**OpenAI Responses** 与 **Anthropic Messages** 三种兼容接口。
+PolyGate 用一套加密保存的本地凭据池，向 Claude Code、Codex、Cursor、Cline、Continue 等客户端
+提供 **OpenAI Chat Completions**、**OpenAI Responses** 与 **Anthropic Messages** 三种兼容接口。
+
+它解决的是同一个账号被多个客户端反复挤占的问题：账号按 `(Provider, Region)` 隔离，请求按额度、
+健康度和会话粘性分派，额度未知就保持未知，失败只在客户端还没看到输出之前切换。
 
 纯 Rust 单二进制（无 Node、无 Python 运行时），默认只监听 `127.0.0.1`，内置 Web 管理台、
-SQLite 持久化、账号调度、会话粘性、模型别名、请求日志与签到管理。凭据只以 AES-256-GCM 加密落盘。
+SQLite 持久化、账号调度、模型别名、请求日志与签到管理。凭据只以 AES-256-GCM 加密落盘。
 
-选纯 Rust 的目的就是**能在低内存设备上长期跑**：软路由、NAS、1 GB 内存的小 VPS。没有 JIT、
+选纯 Rust 是为了**能在低内存设备上长期跑**：软路由、NAS、1 GB 内存的小 VPS。没有 JIT、
 没有 V8 堆、没有进程外运行时；在 IPQ6000 软路由上实测常驻 18 MB（见[运行时占用](#运行时占用)）。
+
+## 目录
+
+- [截图](#截图)
+- [特性](#特性)
+- [支持的 Provider](#支持的-provider)
+- [快速开始](#快速开始)
+- [客户端接入](#客户端接入)
+- [架构](#架构)
+- [运行时占用](#运行时占用)
+- [部署](#部署)
+- [安全默认值](#安全默认值)
+- [已知限制](#已知限制)
+- [文档](#文档)
+- [开发](#开发)
+- [参考项目](#参考项目)
+- [许可证](#许可证)
 
 ## 截图
 
-部署在软路由上的实际控制台（9 个 Provider、10 个账号、真实上游流量）：
+部署在软路由上的实际控制台（9 个 Provider、10 个账号，真实上游流量）：
 
-<p align="center"><img src="docs/images/dashboard.png" width="880" alt="仪表盘"></p>
+<p align="center"><img src="docs/images/dashboard.png" width="900" alt="仪表盘"></p>
 
 | | |
 | :---: | :---: |
-| <img src="docs/images/models.png" width="430" alt="模型管理"> | <img src="docs/images/accounts.png" width="430" alt="账号管理"> |
-| 模型别名与按 Provider 分组的原生模型 | 账号凭据状态与额度 |
-| <img src="docs/images/checkins.png" width="430" alt="签到管理"> | <img src="docs/images/logs.png" width="430" alt="请求日志"> |
-| 每日签到记录（成功 / 今日已签 / 失败原因） | 请求日志只存元数据，不含提示词与凭据 |
-| <img src="docs/images/settings.png" width="430" alt="系统设置"> | <img src="docs/images/login.png" width="430" alt="登录页"> |
-| Provider 接入状态与能力矩阵 | 管理员登录（Argon2id + 会话 Cookie） |
+| <img src="docs/images/models.png" width="440" alt="模型管理"> | <img src="docs/images/accounts.png" width="440" alt="账号管理"> |
+| 模型别名与按 Provider 分组的原生模型 | 账号凭据状态与额度（账号名已打码） |
+| <img src="docs/images/checkins.png" width="440" alt="签到管理"> | <img src="docs/images/logs.png" width="440" alt="请求日志"> |
+| 每日签到：成功 / 今日已签 / 失败原因 | 请求日志只存元数据，不含提示词与凭据 |
+| <img src="docs/images/settings.png" width="440" alt="系统设置"> | <img src="docs/images/login.png" width="440" alt="登录页"> |
+| Provider 接入状态与能力矩阵 | 管理员登录（Argon2id + HttpOnly 会话） |
 
 ## 特性
 
 **协议层**
 
-- `POST /v1/chat/completions` — JSON 与 SSE，支持 tools / tool_choice、`reasoning_content`、`stream_options.include_usage`
+- `POST /v1/chat/completions` — JSON 与 SSE，tools / tool_choice、`reasoning_content`、`stream_options.include_usage`
 - `POST /v1/responses` — 文本、多轮、function call，完整 SSE 事件生命周期（`response.*`）
 - `POST /v1/messages` — Anthropic Messages：system / messages / tool_use / tool_result / SSE
 - `GET /v1/models`、`GET /health`；错误体按接口分别遵循 OpenAI / Anthropic 形状
+- 三种接口共用一份内部 `ChatRequest`，转换层只在上游边界存在
 
 **账号池与调度**
 
 - 多账号、按 `(Provider, Region)` 隔离，CN 与 Intl 账号永不串号
 - 三种策略：轮询、平滑加权轮询、最少连接
-- 额度感知（只排除**已知**耗尽账号，未知额度保持 `unknown`）、失败冷却、并发许可
+- 额度感知：只排除**已知**耗尽账号，未知额度保持 `unknown`，不臆测成 0 或无限
+- 失败冷却、并发许可、健康度轮换；403/429 单独处理，客户端错误不冷却账号
 - 会话粘性（`x-session-id` / 首条用户消息哈希），租约结束自动归还槽位
 - 只在可见输出之前故障切换；流式中途失败以 in-stream error 帧结束，绝不静默重放
 
 **模型注册表**
 
-- 别名 → 多目标（provider + upstream model），支持优先级、权重、能力覆盖
+- 别名 → 多目标（provider + upstream model），支持优先级、权重与能力覆盖
 - 能力校验（tools / vision / reasoning / context），`provider::model` 消除同名歧义
-- 原生模型 ID 始终可用，别名不能遮蔽同名原生模型
+- 原生模型 ID 始终可用，别名不能遮蔽同名原生模型；控制台按 Provider 分组展示
 
 **运维**
 
@@ -70,20 +95,28 @@ SQLite 持久化、账号调度、会话粘性、模型别名、请求日志与�
 
 ## 支持的 Provider
 
-| Provider | Region | 认证 | 状态 |
+| Provider | Region | 认证方式 | 状态 |
 | --- | --- | --- | --- |
-| CodeArts（华为云） | CN | 浏览器 OAuth + STS/DPoP 续期 | **LiveVerified**（真实账号） |
-| CodeArts（华为云） | Intl | 同上 | MockVerified |
-| Qoder（阿里） | CN | OAuth + COSY 网关 | **LiveVerified**（真实账号） |
-| Qoder（阿里） | Intl | 同上 | **LiveVerified**（真实账号） |
-| Loomy（讯飞） | CN | 导入桌面端会话（14 天） | **LiveVerified**（真实账号） |
+| CodeArts（华为云） | CN | 浏览器 OAuth + STS / DPoP 续期 | **LiveVerified** |
+| CodeArts（华为云） | Intl | 同上 | MockVerified（Intl 账号可授权，上游限制见 PROGRESS） |
+| Qoder（阿里） | CN | OAuth + COSY 网关 | **LiveVerified** |
+| Qoder（阿里） | Intl | 同上 | **LiveVerified**（额度在 Intl 仍可能为 unknown） |
+| Loomy（讯飞） | CN | 导入桌面端会话（14 天） | **LiveVerified** |
 | WorkBuddy（腾讯） | CN / Intl | 设备码 / 登录态 | MockVerified |
 | TRAE（字节） | CN | 登录态 | MockVerified |
 | OfficeAce（华为 AgentArts） | CN | 华为云授权（PKCE + DPoP + STS） | MockVerified |
 | Mock | — | 无 | 仅测试与本地演示 |
 
-> **MockVerified ≠ LiveVerified**：MockVerified 表示协议、续期、额度与签到只经过本地确定性
-> Mock 服务器验证，没有向真实上游发过请求。逐项能力与未验证项见 [`PROGRESS.md`](PROGRESS.md)。
+状态含义：
+
+| 状态 | 含义 |
+| --- | --- |
+| **LiveVerified** | 用真实账号端到端验证过（授权、模型发现、对话、额度中已验证的部分） |
+| MockVerified | 协议已实现，只用本地确定性 Mock 服务器验证过，未向真实上游发过请求 |
+| Unsupported | 上游不提供该能力，明确不实现 |
+| CompatibilityGap | 上游接口存在但行为不兼容，已在文档中记录 |
+
+> **MockVerified ≠ LiveVerified**。逐项能力与未验证项见 [`PROGRESS.md`](PROGRESS.md)。
 >
 > 明确不支持，也不会加入：CodeBuddy、ZCode、OpenCode Zen。
 
@@ -105,8 +138,8 @@ export POLYGATE_MASTER_KEY="$(openssl rand -hex 32)"
 ./target/release/polygate --config data/config.toml --data-dir data serve
 ```
 
-打开 <http://127.0.0.1:8787/> 设置管理员密码，在「账号管理」完成授权，在「模型管理」确认
-模型目录与别名。
+打开 <http://127.0.0.1:8787/> 完成首次初始化：设置管理员密码（Argon2id），拿到一次性恢复码
+并离线保存。之后在「账号管理」完成上游授权，在「模型管理」确认模型目录与别名。
 
 第一次调用：
 
@@ -134,8 +167,33 @@ curl http://127.0.0.1:8787/v1/chat/completions \
   }'
 ```
 
-客户端接入：OpenAI 兼容客户端把 `base_url` 指向 `http://127.0.0.1:8787/v1`；Anthropic 客户端
-指向 `http://127.0.0.1:8787`。API Key 填 `POLYGATE_API_KEY`，模型名填别名或 `provider::model`。
+## 客户端接入
+
+**Claude Code**（Anthropic Messages）：
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+export ANTHROPIC_AUTH_TOKEN=$POLYGATE_API_KEY
+```
+
+**Codex CLI**（OpenAI Chat Completions），`~/.codex/config.toml`：
+
+```toml
+model_provider = "polygate"
+model = "coding"
+
+[model_providers.polygate]
+name = "PolyGate"
+base_url = "http://127.0.0.1:8787/v1"
+env_key = "POLYGATE_API_KEY"
+wire_api = "chat"
+```
+
+**Cursor / Cline / Continue**：OpenAI 兼容模式，Base URL 填 `http://127.0.0.1:8787/v1`，
+API Key 填 `POLYGATE_API_KEY`，模型名填别名或 `provider::model`。
+
+模型名可以是别名（可挂多个上游目标），也可以是 `provider::model` 形式的原生模型；
+同名模型来自多个 Provider 时必须用后一种写法。
 
 ## 架构
 
@@ -170,7 +228,7 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 | 线程数 | 8 |
 | 虚拟内存 | 36.6 MB |
 
-**Windows 基准**（同机 Mock 上游，2026-10-29，16 条 keep-alive 连接、1600 次请求）：
+**Windows 基准**（同机 Mock 上游，16 条 keep-alive 连接、1600 次请求）：
 
 | 指标 | 数值 |
 | --- | --- |
@@ -199,6 +257,13 @@ IPQ6000 / MT7986 / IPQ807x 等 Cortex-A53 平台可直接运行。procd 启动�
 环境变量模板在 [`deploy/openwrt/`](deploy/openwrt/)，步骤见
 [`docs/DEPLOYMENT.md` §12](docs/DEPLOYMENT.md#12-openwrt--kwrtaarch64-软路由)。
 
+跨架构构建：
+
+```bash
+cargo install cargo-zigbuild --locked
+cargo zigbuild --release --target aarch64-unknown-linux-musl
+```
+
 ## 安全默认值
 
 - 只监听 `127.0.0.1`；公网部署必须置于 TLS 反向代理之后
@@ -207,6 +272,15 @@ IPQ6000 / MT7986 / IPQ807x 等 Cortex-A53 平台可直接运行。procd 启动�
 - 请求日志不含提示词、消息内容、工具参数
 - 未知额度保持 `unknown`（`null`），不当成 0 或无限
 - 不生成设备指纹，不实现验证码破解、批量注册、封禁换号续跑、额度与风控绕过
+
+## 已知限制
+
+- **模型目录在启动时发现**：新增账号或 Provider 后需要重启网关，`/v1/models` 才会出现新模型。
+  管理台会提示 `restart_required`。
+- **单实例**：调度器状态与 SQLite 写锁都在进程内，不支持多实例共享同一个数据库。
+- **图片与多模态输入未验证**：能力矩阵里的 vision 只表示上游声明支持，未做真实请求验证。
+- **签到需要显式开启**：`checkin.claim_enabled` 默认关闭；是否允许自动化由操作者对该上游负责。
+- OfficeAce / WorkBuddy / TRAE 目前只有 Mock 验证；Intl 账号的部分能力受上游行为影响。
 
 ## 文档
 
