@@ -12,7 +12,7 @@
 use crate::account_service::AccountService;
 use crate::accounts::Credential;
 use crate::config::ProviderKind;
-use crate::providers::{ProviderKey, ProviderRegistry};
+use crate::providers::{ProviderContext, ProviderKey, ProviderRegistry};
 
 /// One model reachable through the gateway.
 #[derive(Debug, Clone)]
@@ -105,7 +105,23 @@ impl ModelCatalog {
                 let Some(credential) = context.credential else {
                     continue;
                 };
-                credential
+                // Let an expiring credential rotate itself first: an STS token
+                // that died while the process was down would otherwise remove
+                // every model of that provider from the catalogue. This is the
+                // same path a real request takes, and the refreshed credential
+                // is persisted by the adapter.
+                let probe = ProviderContext {
+                    account_id: Some(account.id.clone()),
+                    credential_revision: context.credential_revision,
+                    ..Default::default()
+                };
+                let _ = provider.auth_status_with_context(&probe, &credential).await;
+                accounts
+                    .authorization_context(&account.id)
+                    .await
+                    .ok()
+                    .and_then(|fresh| fresh.credential)
+                    .unwrap_or(credential)
             };
             match provider.list_models(&credential).await {
                 Ok(models) => Self::push_models(&mut entries, key, models),

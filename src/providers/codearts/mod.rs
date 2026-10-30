@@ -221,19 +221,27 @@ impl CodeArtsProvider {
                 "CodeArts credential expired and has no refresh material",
             ));
         }
-        let (Some(store), Some(account_id)) = (&self.store, context.account_id.as_ref()) else {
-            if parsed.expired(self.now()) {
-                return Err(GatewayError::new(
-                    ErrorKind::AuthExpired,
-                    "CodeArts credential expired; no credential store is configured",
-                ));
-            }
-            return Ok(parsed);
-        };
         if !parsed.can_refresh() {
             return Ok(parsed);
         }
+        self.rotate(context, credential, false).await
+    }
 
+    /// Rotate the STS token. `forced` skips the "is it expiring" question: the
+    /// upstream already rejected a token the credential believes is fresh.
+    /// The refresh token is one-time, so the lock and the reload come first.
+    async fn rotate(
+        &self,
+        context: &ProviderContext,
+        credential: &Credential,
+        forced: bool,
+    ) -> Result<CodeArtsCredential, GatewayError> {
+        let (Some(store), Some(account_id)) = (&self.store, context.account_id.as_ref()) else {
+            return Err(GatewayError::new(
+                ErrorKind::AuthExpired,
+                "CodeArts credential expired; no credential store is configured",
+            ));
+        };
         let lock = {
             let mut locks = self.refresh_locks.lock();
             locks
@@ -249,7 +257,8 @@ impl CodeArtsProvider {
             None => (credential.clone(), context.credential_revision.unwrap_or(0)),
         };
         let latest_parsed = CodeArtsCredential::parse(&latest)?;
-        if !latest_parsed.expiring(self.now()) {
+        let rotated_elsewhere = revision != context.credential_revision.unwrap_or(0);
+        if (!latest_parsed.expiring(self.now()) && !forced) || (forced && rotated_elsewhere) {
             return Ok(latest_parsed);
         }
 
@@ -320,12 +329,24 @@ impl CodeArtsProvider {
         context: &ProviderContext,
         credential: &Credential,
     ) -> Result<AuthStatus, GatewayError> {
-        match self.ensure_fresh(context, credential).await {
-            Ok(fresh) => self.probe_status(&fresh).await,
+        let fresh = match self.ensure_fresh(context, credential).await {
+            Ok(fresh) => fresh,
             // Nothing to refresh with: report expiry instead of hiding it behind
             // a transport-style error.
-            Err(error) if error.kind == ErrorKind::AuthExpired => Ok(AuthStatus::Expired),
-            Err(error) => Err(error),
+            Err(error) if error.kind == ErrorKind::AuthExpired => return Ok(AuthStatus::Expired),
+            Err(error) => return Err(error),
+        };
+        match self.probe_status(&fresh).await? {
+            // The upstream rejected a token whose recorded expiry is still in
+            // the future (revoked, or the clock differs). Rotate once; without
+            // this a stale but "fresh-looking" credential would keep a provider
+            // out of the catalogue until the operator re-authorizes.
+            AuthStatus::RefreshRequired => match self.rotate(context, credential, true).await {
+                Ok(rotated) => self.probe_status(&rotated).await,
+                Err(error) if error.kind == ErrorKind::AuthExpired => Ok(AuthStatus::Expired),
+                Err(error) => Err(error),
+            },
+            status => Ok(status),
         }
     }
 
