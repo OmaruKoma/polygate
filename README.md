@@ -210,6 +210,33 @@ API Key 填 `POLYGATE_API_KEY`，模型名填别名或 `provider::model`。
 模型名可以是别名（可挂多个上游目标），也可以是 `provider::model` 形式的原生模型；
 同名模型来自多个 Provider 时必须用后一种写法。
 
+### 选模型：别名与直呼
+
+模型名按「先别名、后原生」解析。原生模型有两种写法：
+
+```
+coding                                   # 别名：可挂多个 Provider 目标，带优先级/权重
+deepseek-v4.1-flash                      # 原生 ID：只有唯一 Provider 提供时可用
+codearts-cn::deepseek-v4.1-flash         # 直呼：provider::model，跳过歧义
+workbuddy-cn::glm-5.3
+qoder-intl::auto
+```
+
+`::` 左边是配置里的 Provider **实例 id**（`codearts-cn`、`workbuddy-intl`、`officeace-cn` …），
+不是 kind。不同上游经常代理同一批模型（`deepseek-v4.1-flash` 同时出现在 CodeArts、WorkBuddy、
+OfficeAce 的目录里），裸 ID 遇到重名会直接返回 400 并列出候选，不会随机挑一个：
+
+```bash
+curl http://127.0.0.1:8787/v1/chat/completions \
+  -H "Authorization: Bearer $POLYGATE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "codearts-cn::deepseek-v4.1-flash",
+       "messages": [{"role": "user", "content": "hi"}]}'
+```
+
+想跨 Provider 自动换号，就建别名，把多个 `provider::model` 挂到同一个名字下
+（管理台「模型管理 → 新建别名」，或 `POST /admin/api/model-routes`）。
+
 ## 架构
 
 ```
