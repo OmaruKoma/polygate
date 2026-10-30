@@ -184,6 +184,16 @@ HTTPS/反向代理：默认只监听 `127.0.0.1`。公网部署必须置于 TLS 
 `server.public_url`（或 `trust_proxy = true` 并正确传递 `X-Forwarded-Proto`），并把
 `redirect_url` 配成外部可访问的 HTTPS 地址。
 
+**局域网访问**（例如路由器上的 `listen = "10.0.0.1:8787"`）：默认回调是 `127.0.0.1`，
+浏览器在别的机器上会打不开，必须显式指定：
+
+```toml
+[admin]
+redirect_url = "http://10.0.0.1:8787/oauth/callback"
+```
+
+当前生效值可以在未登录的 `GET /admin/api/bootstrap` 里看到（`oauth_callback_url`）。
+
 ## 8. 前端
 
 - 单页、无构建步骤；首次加载 `bootstrap` 决定显示“设置 / 登录 / 应用”。

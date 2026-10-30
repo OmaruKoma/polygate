@@ -4332,3 +4332,45 @@ WSL 里的 HTTP 探测用 bash `/dev/tcp` 完成（该镜像无 curl），未安
   未实测。
 - 静态 musl 不读取系统 `openssl`，TLS 完全由 rustls 自带；若路由器有透明代理/证书替换，
   需要自行保证出网路径可用。
+
+## 47. 软路由实机部署与 doctor 误报修复（2026-10-30，完成）
+
+### 47.1 部署结果（10.0.0.1，Kwrt 25.12 / IPQ6000）
+
+- 静态 aarch64 产物装到 `/usr/bin/polygate`，procd 自启（`/etc/init.d/polygate`），
+  `listen = 10.0.0.1:8787`，数据目录 `/etc/polygate`（overlay 1.7 G 可用）。
+- 内存实测：启动 8.5 MB RSS，400 次请求后 11.3 MB，16 条并发 SSE 峰值 13.6 MB；
+  匿名页仅 1.9–6.1 MB，其余为可回收的二进制 text 页。
+- 真实 CodeArts CN 账号经面板授权后，`/v1/models` 列出 10 个上游模型；
+  `POST /v1/chat/completions`（`deepseek-v4.1-flash`）返回 200 与正常 usage。
+
+### 47.2 两个配置陷阱（文档已补）
+
+1. **provider 只从配置注册**：面板授权的账号不带 provider 实例，缺 `[[providers]]` 时
+   签到/检查认证/刷新额度都返回 `provider is not registered`。已给软路由补 CodeArts CN 与
+   Qoder CN 两段。
+2. **`[admin] redirect_url` 默认是 `127.0.0.1`**：监听局域网地址时浏览器在别的机器上，
+   回调打不开。改为 `http://10.0.0.1:8787/oauth/callback` 后，
+   `GET /admin/api/bootstrap` 的 `oauth_callback_url` 同步更新（已实测）。
+
+### 47.3 代码修复：doctor 对非 mock provider 的误报
+
+`src/cli/mod.rs` 的 `providers_check` 仍保留早期里程碑的断言：只要启用非 mock provider
+就报 “non-mock provider enabled but not implemented”。四个 provider 早已实现，该判断已删除，
+现在只汇总已启用项。
+
+### 47.4 验证
+
+```text
+$ cargo fmt --all -- --check                     （exit 0）
+$ cargo clippy --workspace --all-targets -D warnings   （0 warnings）
+$ cargo test --workspace                         646 passed
+
+路由器（service 运行中）：
+[ok] providers: mock-cn:mock, codearts-cn:codearts, qoder-cn:qoder
+[ok] api_key: 1 key(s) configured   [ok] master_key: usable (environment, 32 bytes)
+[ok] database: reachable; migrations applied
+[FAIL] listen: Address in use      ← 预期，serve 正在占用端口
+```
+
+`/etc/polygate/config.toml.bak-20261030`、`.bak2-20261030` 为两次配置变更的备份。

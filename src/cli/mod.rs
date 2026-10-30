@@ -263,15 +263,6 @@ fn providers_check(config: &Config) -> DoctorCheck {
         .map(|provider| format!("{}:{}", provider.provider_id(), provider.kind.as_str()))
         .collect::<Vec<_>>()
         .join(", ");
-    if enabled
-        .iter()
-        .any(|provider| provider.kind != crate::config::ProviderKind::Mock)
-    {
-        return fail(
-            "providers",
-            format!("non-mock provider enabled but not implemented: {summary}"),
-        );
-    }
     pass("providers", summary)
 }
 

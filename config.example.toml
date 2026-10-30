@@ -40,6 +40,9 @@ admin_session_ttl_hours = 24
 enabled = true
 # Authorization callback. Must be reachable by the browser and allowed by the
 # CodeArts portal. Defaults to http://127.0.0.1:<listen-port>/oauth/callback.
+# Browser-visible callback URL. Defaults to
+# http://127.0.0.1:<listen-port>/oauth/callback; set it whenever the browser
+# is not on the gateway host (e.g. "http://10.0.0.1:8787/oauth/callback").
 # redirect_url = "https://polygate.example.com/oauth/callback"
 # First-run setup is only accepted from a loopback peer AND a loopback Host.
 # Keep true unless you know exactly why you need otherwise.

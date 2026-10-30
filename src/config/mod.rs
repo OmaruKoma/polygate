@@ -392,7 +392,9 @@ impl Default for ModelCapabilitiesConfig {
 pub struct AdminConfig {
     pub enabled: bool,
     /// Public callback URL for the CodeArts browser authorization. When absent
-    /// the gateway derives `http://127.0.0.1:<listener-port>/oauth/callback`.
+    /// the gateway derives `http://127.0.0.1:<listener-port>/oauth/callback`,
+    /// which only works when the browser runs on the same host; set it to the
+    /// address the browser actually uses when listening on a LAN address.
     pub redirect_url: Option<String>,
     /// Reject the first-run setup unless the TCP peer is loopback.
     pub setup_local_only: bool,
