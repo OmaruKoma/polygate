@@ -334,7 +334,6 @@ PolyGate 的协议事实来自这些项目的一手实践。没有它们，每�
 | [RobbsLuo/Coding2API](https://github.com/RobbsLuo/Coding2API) | RobbsLuo | 各 Provider 的协议事实：CodeArts 会话槽位与 `TM.00001041` 并发错误、签到端点与额度字段、WorkBuddy / TRAE / OfficeAce 的请求头族、签名派生与事件格式 |
 | [Patrick130306/loomy2api](https://github.com/Patrick130306/loomy2api) | Patrick130306 | 讯飞 Loomy 桌面端协议：14 天会话结构、`traceparent` 头族、模型目录、points 账本与 SSE 事件 |
 | [chengzhi-c/dsh-wtq-pool](https://github.com/chengzhi-c/dsh-wtq-pool) | chengzhi-c | 账号池设计：槽位持久化、延迟开放重试、额度分组；Web UI 的视觉语言（深灰分层、青绿强调、细边框、胶囊按钮） |
-| `codearts2api`（未开源） | 本项目作者 | CodeArts 适配的直接前作：会话槽位、签到流程与计费字段的第一手实现；PolyGate 在此基础上重写为 Rust，并补齐多 Provider 与调度层 |
 
 参考的细节值得单独说一句：Coding2API 把 CodeArts 的槽位并发错误、签到端点与 OfficeAce
 的双签名链路讲清楚了；loomy2api 从官方 Electron 客户端 0.9.38 里整理出了 Loomy 的完整
@@ -348,6 +347,5 @@ PolyGate 的协议事实来自这些项目的一手实践。没有它们，每�
 
 [MIT](LICENSE)。依赖均为 MIT / Apache-2.0 / BSD / Zlib / ISC 等宽松许可（含多许可选项）。
 Coding2API、loomy2api、dsh-wtq-pool 均为 MIT（Copyright 2026 各自作者）；本项目只吸收协议
-事实与设计结论，未包含其代码，因此不附带其版权声明。`codearts2api` 为同作者作品，若复用其
-代码需保留原版权声明并在 `NOTICE` 中标注。
+事实与设计结论，未包含其代码，因此不附带其版权声明。
 
