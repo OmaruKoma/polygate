@@ -697,6 +697,42 @@ async fn codearts_paste_rejects_a_url_without_a_code() {
 }
 
 #[tokio::test]
+async fn stuck_authorization_can_be_cancelled_without_its_id() {
+    let upstream = sts_server().await;
+    let harness = harness(&upstream.base_url, 600).await;
+    let (session, _) = setup(&harness.app).await;
+    start_flow(&harness.app, &session, "cn", "Stuck").await;
+
+    // A second start names the blocking flow instead of a bare refusal.
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        "/admin/api/auth/qoder/start",
+        Some(json!({"region": "cn"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("already in progress"), "{message}");
+    assert!(message.contains("codearts"), "{message}");
+
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        "/admin/api/auth/active/cancel",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "cancelled");
+
+    // The slot is free again.
+    start_flow(&harness.app, &session, "cn", "After cancel").await;
+}
+
+#[tokio::test]
 async fn authorization_can_be_cancelled_and_expires() {
     let upstream = sts_server().await;
     let harness = harness(&upstream.base_url, 1).await;

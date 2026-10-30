@@ -65,12 +65,7 @@ impl AdminState {
 
         let now = Utc::now();
         self.storage.admin().expire_flows(now).await?;
-        if self.storage.admin().active_flow(now).await?.is_some() {
-            return Err(GatewayError::new(
-                ErrorKind::BadRequest,
-                "another authorization is already in progress; cancel it or wait for it to expire",
-            ));
-        }
+        self.ensure_no_active_flow(now).await?;
         let start =
             self.trae_auth
                 .start(region, &machine_id, &device_id, &self.settings.redirect_url)?;

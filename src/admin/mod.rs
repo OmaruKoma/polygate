@@ -298,6 +298,10 @@ pub fn router(state: AdminState) -> Router {
             post(api::run_account_checkin),
         )
         .route(
+            "/admin/api/auth/active/cancel",
+            post(api::cancel_active_auth),
+        )
+        .route(
             "/admin/api/auth/codearts/start",
             post(api::start_codearts_auth),
         )

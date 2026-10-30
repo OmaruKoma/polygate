@@ -4524,3 +4524,56 @@ $ curl /v1/models → 22
 
 开启开关后的真实 claim 结果未由我触发（需要管理台会话）；操作者点一次「签到」后即可从
 `checkin_runs` 与账号详情确认。
+
+## 51. 授权槽位卡死：命名占用者与一键取消（2026-10-30，完成）
+
+### 51.1 现象
+
+管理台连续出现：
+
+```text
+another authorization is already in progress; cancel it or wait for it to expire
+```
+
+此时再点任何 Provider 的「添加账号」（包括 CodeArts / Qoder CN）都会被拒绝，且界面没有任何
+入口告诉操作者该等多久、到底在等谁。
+
+### 51.2 原因
+
+管理台同一时刻只允许一个授权流程（`admin_flows` 表 + `active_flow(now)`）。Qoder Intl 的
+设备码流程 `2afdf1bc-9ddc-4d9a-b1cf-ad92bb62215b`（创建 03:07:42Z，`expires_at`
+03:17:42Z）在浏览器侧卡在 `selectAccounts` 页，流程一直是 `pending`，因此全局槽位被占满。
+旧代码只回一句固定文案，既不含流程类型/区域/创建时间，也没有取消接口——只能干等 10 分钟
+`flow_ttl_secs` 到期（而过期清理 `expire_flows` 只在发起/取消授权时运行，不轮询）。
+
+### 51.3 修改
+
+- `AdminState::ensure_no_active_flow(now)`（`src/admin/auth/flow.rs`）：四个 Provider 的
+  `start` 路径原有的重复守卫合并到这里，错误信息改为点名占用者：
+  `another authorization is already in progress (codearts cn, started 2026-10-30T03:07:42+00:00); ...`
+- `AdminState::cancel_active_flow()`：先 `expire_flows`，再取当前槽位并 `cancel_flow`，
+  返回 `FlowView`；没有流程时返回 `null`。
+- 新接口 `POST /admin/api/auth/active/cancel`，不需要 flow id（操作者界面上本来也看不到未完成
+  流程的 id）。
+- 前端（`web/app.js`）：发起授权失败且错误含 `already in progress` 时，在状态行下方追加
+  「取消进行中的授权」按钮，成功后提示重新点击对应 Provider。
+- 测试 `stuck_authorization_can_be_cancelled_without_its_id`：先发起 CodeArts 流程占槽，
+  再发起 Qoder 流程断言文案含 `already in progress` 与 `codearts`，调用取消接口断言
+  `status = cancelled`，然后再次发起流程成功。
+
+### 51.4 验证
+
+```text
+$ cargo fmt --check                              → 通过
+$ cargo clippy --all-targets -- -D warnings      → 通过
+$ cargo test --workspace                         → 652 passed
+$ cargo zigbuild --release --target aarch64-unknown-linux-musl  → 成功
+```
+
+aarch64 二进制已替换路由器 `/usr/bin/polygate` 并 `restart`，`/health` 返回 200。
+
+### 51.5 未验证
+
+Qoder Intl 的 `selectAccounts` 循环本身仍未解决：网关侧的设备码轮询（202/404 = 等待）与
+超时处理都正常，卡点在浏览器页面。需要操作者在选中账号后观察页面是否回到
+`/device/selectAccounts`，以及是否出现授权码/错误提示，才能判断是上游限制还是需要额外参数。

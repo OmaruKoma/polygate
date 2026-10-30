@@ -1094,6 +1094,14 @@ pub struct CompleteTraeRequest {
     pub url: String,
 }
 
+pub async fn cancel_active_auth(State(state): State<AdminState>) -> Response {
+    match state.cancel_active_flow().await {
+        Ok(Some(view)) => json_ok(serde_json::to_value(view).unwrap_or(Value::Null)),
+        Ok(None) => json_ok(Value::Null),
+        Err(error) => json_error(&error),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct CompleteCodeartsRequest {
     /// The full callback URL copied from the browser address bar, or the code.

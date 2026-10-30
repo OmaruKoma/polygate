@@ -587,6 +587,24 @@
       if (popup) popup.close();
       status.textContent = error.message;
       toast(error.message, "error");
+      if (String(error.message || "").includes("already in progress")) {
+        const cancel = document.createElement("button");
+        cancel.className = "btn";
+        cancel.type = "button";
+        cancel.textContent = "取消进行中的授权";
+        cancel.addEventListener("click", async () => {
+          cancel.disabled = true;
+          try {
+            await api("/admin/api/auth/active/cancel", { method: "POST" });
+            status.textContent = "已取消进行中的授权，请重新点击「" + provider.startLabel + "」。";
+          } catch (err) {
+            cancel.disabled = false;
+            status.textContent = err.message;
+          }
+        });
+        status.appendChild(document.createElement("br"));
+        status.appendChild(cancel);
+      }
     }
   }
 

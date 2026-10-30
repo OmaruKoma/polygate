@@ -31,12 +31,7 @@ impl AdminState {
     ) -> Result<FlowView, GatewayError> {
         let now = Utc::now();
         self.storage.admin().expire_flows(now).await?;
-        if self.storage.admin().active_flow(now).await?.is_some() {
-            return Err(GatewayError::new(
-                ErrorKind::BadRequest,
-                "another authorization is already in progress; cancel it or wait for it to expire",
-            ));
-        }
+        self.ensure_no_active_flow(now).await?;
         let start = self.qoder_auth.start(region)?;
         let flow_id = uuid::Uuid::new_v4().to_string();
         let ticket_id = start.secrets.nonce.clone();

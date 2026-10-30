@@ -38,12 +38,7 @@ impl AdminState {
     ) -> Result<FlowView, GatewayError> {
         let now = Utc::now();
         self.storage.admin().expire_flows(now).await?;
-        if self.storage.admin().active_flow(now).await?.is_some() {
-            return Err(GatewayError::new(
-                ErrorKind::BadRequest,
-                "another authorization is already in progress; cancel it or wait for it to expire",
-            ));
-        }
+        self.ensure_no_active_flow(now).await?;
         let port = url::Url::parse(&self.settings.redirect_url)
             .ok()
             .and_then(|url| url.port_or_known_default())
@@ -108,6 +103,36 @@ impl AdminState {
     pub async fn cancel_codearts_flow(&self, flow_id: &str) -> Result<FlowView, GatewayError> {
         let _ = self.storage.admin().cancel_flow(flow_id).await?;
         self.flow_status(flow_id).await
+    }
+
+    /// Reject a new login while another one holds the single slot, naming it.
+    pub(super) async fn ensure_no_active_flow(
+        &self,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<(), GatewayError> {
+        let Some(flow) = self.storage.admin().active_flow(now).await? else {
+            return Ok(());
+        };
+        Err(GatewayError::new(
+            ErrorKind::BadRequest,
+            format!(
+                "another authorization is already in progress ({} {}, started {}); cancel it or wait for it to expire",
+                flow.kind,
+                flow.region,
+                flow.created_at.to_rfc3339()
+            ),
+        ))
+    }
+
+    /// Cancel whichever flow currently holds the single slot, if any.
+    pub async fn cancel_active_flow(&self) -> Result<Option<FlowView>, GatewayError> {
+        let now = Utc::now();
+        self.storage.admin().expire_flows(now).await?;
+        let Some(flow) = self.storage.admin().active_flow(now).await? else {
+            return Ok(None);
+        };
+        self.storage.admin().cancel_flow(&flow.id).await?;
+        Ok(Some(self.flow_status(&flow.id).await?))
     }
 
     /// Called by `GET /oauth/callback`. There is exactly one live flow.
