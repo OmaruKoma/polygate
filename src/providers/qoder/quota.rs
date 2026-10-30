@@ -8,15 +8,33 @@
 //!
 //! An absent `addOnQuota` object is read as "this account has no add-on package"
 //! and contributes zero; a present-but-malformed one makes the snapshot unknown.
+//!
+//! Two routes answer with the same counters: `/sash/api/v2/me/usage` is the
+//! presentation document the IDE reads (it additionally carries per-model
+//! packages) and `/api/v2/quota/usage` is the older narrower shape. Documents
+//! from either may arrive bare, under `qoderUsage`, or under `data`, with
+//! camelCase or snake_case quota keys (dsh `qoder-client.ts:908-914`).
 
 use serde_json::Value;
 
 use crate::quota::{QuotaSnapshot, QuotaStatus, QuotaUnit};
 
+/// IDE-shaped usage document; preferred over [`super::region::QUOTA_PATH`].
+pub const PRESENTATION_PATH: &str = "/sash/api/v2/me/usage";
+
 /// Parse a quota payload. Never invents a balance.
 pub fn parse_quota(account_id: &str, payload: &Value) -> QuotaSnapshot {
-    let base = payload.get("userQuota").and_then(Value::as_object);
-    let addon = payload.get("addOnQuota");
+    let usage = ["qoderUsage", "data"]
+        .iter()
+        .find_map(|key| payload.get(*key).filter(|value| value.is_object()))
+        .unwrap_or(payload);
+    let base = usage
+        .get("userQuota")
+        .or_else(|| usage.get("user_quota"))
+        .and_then(Value::as_object);
+    let addon = usage
+        .get("addOnQuota")
+        .or_else(|| usage.get("add_on_quota"));
 
     let Some(base) = base else {
         return QuotaSnapshot::unknown(account_id, "Qoder quota response has no userQuota object");
@@ -119,6 +137,41 @@ mod tests {
     #[test]
     fn missing_user_quota_is_unknown() {
         let quota = parse_quota("a1", &json!({"message": "ok"}));
+        assert_eq!(quota.status, QuotaStatus::Unknown);
+        assert_eq!(quota.remaining, None);
+    }
+
+    #[test]
+    fn presentation_envelope_and_snake_case_are_read() {
+        let payload = json!({
+            "data": {
+                "user_quota": {"total": 300, "remaining": 100},
+                "add_on_quota": {"total": 50, "remaining": 50},
+                "dedicated_resource_packages": []
+            }
+        });
+        let quota = parse_quota("a1", &payload);
+        assert_eq!(quota.status, QuotaStatus::Known);
+        assert_eq!(quota.total, Some(350.0));
+        assert_eq!(quota.remaining, Some(150.0));
+    }
+
+    #[test]
+    fn qoder_usage_envelope_is_read() {
+        let payload = json!({
+            "qoderUsage": {"userQuota": {"total": 100, "remaining": 100}}
+        });
+        let quota = parse_quota("a1", &payload);
+        assert_eq!(quota.status, QuotaStatus::Known);
+        assert_eq!(quota.remaining, Some(100.0));
+    }
+
+    #[test]
+    fn dedicated_packages_alone_stay_unknown() {
+        let payload = json!({
+            "data": {"dedicated_resource_packages": [{"total": 500, "remaining": 500}]}
+        });
+        let quota = parse_quota("a1", &payload);
         assert_eq!(quota.status, QuotaStatus::Unknown);
         assert_eq!(quota.remaining, None);
     }

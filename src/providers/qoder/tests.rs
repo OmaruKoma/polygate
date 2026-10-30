@@ -767,11 +767,13 @@ mod openapi {
     #[tokio::test]
     async fn quota_probe_uses_bearer_and_reference_headers() {
         let server = spawn_server(|request| match request.path() {
-            "/api/v2/quota/usage" => Reply::json(
+            "/sash/api/v2/me/usage" => Reply::json(
                 200,
                 json!({
-                    "userQuota": {"total": 100, "remaining": 40},
-                    "addOnQuota": {"total": 20, "remaining": 20}
+                    "data": {
+                        "user_quota": {"total": 100, "remaining": 40},
+                        "add_on_quota": {"total": 20, "remaining": 20}
+                    }
                 })
                 .to_string(),
             ),
@@ -798,6 +800,29 @@ mod openapi {
         );
         assert_eq!(requests[0].header("origin"), Some("https://qoder.cn"));
         assert!(requests[0].header("x-request-id").is_some());
+    }
+
+    #[tokio::test]
+    async fn quota_falls_back_to_the_narrow_route() {
+        let server = spawn_server(|request| match request.path() {
+            "/api/v2/quota/usage" => Reply::json(
+                200,
+                json!({
+                    "userQuota": {"total": 100, "remaining": 40},
+                    "addOnQuota": {"total": 20, "remaining": 20}
+                })
+                .to_string(),
+            ),
+            _ => Reply::json(404, "{}"),
+        })
+        .await;
+        let snapshot = provider(&server.base_url)
+            .quota(&credential(0))
+            .await
+            .unwrap();
+        assert_eq!(snapshot.status, QuotaStatus::Known);
+        assert_eq!(snapshot.remaining, Some(60.0));
+        assert_eq!(server.requests().len(), 2);
     }
 
     #[tokio::test]

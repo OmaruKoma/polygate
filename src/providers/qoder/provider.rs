@@ -29,7 +29,7 @@ use super::error::classify_transport;
 use super::events::{QoderStreamTranslator, SseDecoder, SseFrame};
 use super::gateway::QoderGateway;
 use super::http::QoderApi;
-use super::quota::parse_quota;
+use super::quota::{self, parse_quota};
 use super::region;
 
 /// A stream that produces no bytes for this long is treated as interrupted.
@@ -308,6 +308,15 @@ impl Provider for QoderProvider {
 
     async fn quota(&self, credential: &Credential) -> Result<QuotaSnapshot, GatewayError> {
         let credential = self.credential(credential)?;
+        // The presentation route is what the IDE shows; the narrower quota route
+        // answers with the same counters, so either alone is usable. A failing or
+        // empty first read falls through instead of failing the whole probe.
+        if let Ok(payload) = self.api.get(quota::PRESENTATION_PATH, &credential).await {
+            let snapshot = parse_quota("", &payload);
+            if snapshot.remaining.is_some() {
+                return Ok(snapshot);
+            }
+        }
         let payload = self.api.get(region::QUOTA_PATH, &credential).await?;
         Ok(parse_quota("", &payload))
     }
