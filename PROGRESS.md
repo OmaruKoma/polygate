@@ -4699,3 +4699,51 @@ WorkBuddy CN 签到的真实结果仍未触发（需要管理台点击）。三�
 | `succeeded` / `already_checked_in` | 领取成功或今天已领 |
 | `unsupported` + `no active check-in programme` | 上游对该账号没有开启签到活动（账号/套餐侧，不是网关问题） |
 | `failed` + `reward claim is disabled` | 配置里 `checkin.claim_enabled` 不是 `true` |
+
+## 54. 签到“不支持”无法重试：手动重跑 unsupported 日（2026-10-30，完成）
+
+### 54.1 现象
+
+§52 修好 `workbuddy`/`cn` 注册后，账号详情仍显示「最近签到：不支持」，点「执行签到」
+也仍返回 `provider does not support check-in`。操作者怀疑 Linux 需要杀进程才能重读配置。
+
+### 54.2 排查
+
+- 进程是新二进制（md5 与本地构建一致），配置在启动时读取，`doctor` 读到 5 个 provider；
+  **不需要额外“杀进程”**，`/etc/init.d/polygate restart` 已足够。
+- 真正的阻塞在**数据库**：`checkin_runs` 里该账号当天只有一行
+  `2026-10-30T03:20:26Z / unsupported / provider does not support check-in`，
+  而 `CheckinRepo::claim` 把 `unsupported` 视为当天终态，`CheckinService::run_for`
+  对 `RunClaim::Existing` 直接 `record.to_result(true)` 原样返回（`src/checkin/service.rs:371`）。
+  于是每次点击都是**重放旧结果**，不会发起任何上游请求——面板上的时间和文案都不会变。
+- 账号列表里的 `2026/10/30 11:31:55` 是「检查认证」写入的 `auth_checked_at`，不是签到时间。
+
+### 54.3 修改
+
+`unsupported` 意味着**上游没有发生任何领取动作**（要么 realm 不支持，要么上游没有开启活动），
+所以一次显式的人工重试应当允许重新判定：
+
+- `CheckinRetryMode::is_manual()`（`src/checkin/model.rs`）。
+- `CheckinRepo::claim` 的 claimable 判定增加
+  `CheckinStatus::Unsupported => retry.is_manual()`（`src/storage/checkin.rs`）。
+- 自动循环不变：`run_due` 先按 `allows_auto_retry()` 过滤，仍不会重跑 unsupported 日；
+  `succeeded` / `already_checked_in` / `unknown` 仍然是终态。
+- 测试 `an_unsupported_day_is_re_run_only_on_manual_retry`：写入 unsupported 后，
+  `Automatic` 领取得到 `Existing`，`Manual` 领取会重新执行并拿到 `Succeeded`。
+
+### 54.4 验证
+
+```text
+$ cargo fmt --check                              → 通过
+$ cargo clippy --all-targets -- -D warnings      → 通过
+$ cargo test --workspace                         → 653 passed
+$ cargo zigbuild --release --target aarch64-unknown-linux-musl → 成功（10,983,104 B）
+```
+
+新二进制已部署到路由器（md5 `04e5a2e1a82f8030a41c2bd9fe92d7ee`），服务 `running`，
+`/health` 200。注意本次启动到监听耗时约 18 s（模型发现阶段），期间端口未就绪。
+
+### 54.5 未验证
+
+点击后的真实结果仍未触发。现在它会真正调用
+`/v2/billing/meter/checkin-activity-status`，结果三种分支见 §53.4。

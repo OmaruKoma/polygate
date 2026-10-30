@@ -643,6 +643,46 @@ async fn unknown_outcome_is_never_retried_blindly() {
     assert_eq!(fixture.executor.checkin_calls(), 1);
 }
 
+#[tokio::test]
+async fn an_unsupported_day_is_re_run_only_on_manual_retry() {
+    let fixture = Fixture::memory().await;
+    let account = fixture
+        .create(ProviderKind::Codearts, Region::Cn, "alpha")
+        .await;
+    fixture.executor.script(
+        &account.id,
+        [MockCheckinStep::Outcome(CheckinOutcome::Unsupported)],
+    );
+    let first = fixture.service.checkin(&account.id).await.expect("first");
+    assert_eq!(first.status, CheckinStatus::Unsupported);
+
+    // Nothing was claimed upstream, so the automatic loop still leaves the day
+    // alone, but an operator click may probe again after fixing the cause.
+    let timezone = parse_timezone("Asia/Shanghai").expect("tz");
+    let business_date = business_date_at(fixture.clock.now(), timezone);
+    let automatic = fixture
+        .storage
+        .checkin()
+        .claim(
+            &account.id,
+            account.kind,
+            account.region,
+            business_date,
+            "Asia/Shanghai",
+            fixture.clock.now(),
+            Duration::minutes(10),
+            CheckinRetryMode::Automatic { max_attempts: 3 },
+        )
+        .await
+        .expect("claim");
+    assert!(matches!(automatic, RunClaim::Existing(_)));
+
+    let second = fixture.service.checkin(&account.id).await.expect("second");
+    assert!(!second.replayed);
+    assert_eq!(second.status, CheckinStatus::Succeeded);
+    assert_eq!(fixture.executor.checkin_calls(), 2);
+}
+
 // ---------------------------------------------------------------------------
 // 14-16: already checked in, quota refresh, refresh failure isolation
 // ---------------------------------------------------------------------------

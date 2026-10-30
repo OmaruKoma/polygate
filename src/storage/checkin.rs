@@ -147,8 +147,11 @@ impl CheckinRepo {
     /// * `pending` rows are claimable by anyone;
     /// * `failed` rows only when `retry` allows (manual, or a retryable category
     ///   inside the automatic attempt budget);
+    /// * `unsupported` rows only on an explicit manual retry: nothing was
+    ///   claimed upstream, and the reason may have been configuration that has
+    ///   since been fixed;
     /// * `running` rows are busy while the lease holds, otherwise `Interrupted`;
-    /// * success / unknown / unsupported rows are terminal and returned as-is.
+    /// * success / unknown rows are terminal and returned as-is.
     #[allow(clippy::too_many_arguments)]
     pub async fn claim(
         &self,
@@ -197,6 +200,7 @@ impl CheckinRepo {
         let claimable = match record.status {
             CheckinStatus::Pending => true,
             CheckinStatus::Failed => retry.allows_failed(&record),
+            CheckinStatus::Unsupported => retry.is_manual(),
             _ => false,
         };
 

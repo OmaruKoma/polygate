@@ -295,6 +295,10 @@ pub enum CheckinRetryMode {
 }
 
 impl CheckinRetryMode {
+    pub fn is_manual(&self) -> bool {
+        matches!(self, CheckinRetryMode::Manual)
+    }
+
     pub fn allows_failed(&self, record: &CheckinRecord) -> bool {
         match self {
             CheckinRetryMode::Manual => true,
