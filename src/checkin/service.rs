@@ -27,10 +27,10 @@ use crate::storage::{RunClaim, Storage};
 use super::executor::CheckinExecutor;
 use super::{
     business_date_at, classify_error, default_timezone, due_business_date, parse_timezone,
-    probe_failure_category, CheckinErrorCategory, CheckinPolicy, CheckinProbe, CheckinRecord,
-    CheckinRequest, CheckinResult, CheckinRetryMode, CheckinSchedule, CheckinStatus, Clock,
-    QuotaRefreshHook, QuotaRefreshOutcome, QuotaRefreshRequest, SystemClock, BATCH_CONCURRENCY,
-    DEFAULT_LEASE_SECS, MAX_BATCH_ACCOUNTS,
+    probe_failure_category, AuthRefreshHook, AuthRefreshRequest, CheckinErrorCategory,
+    CheckinPolicy, CheckinProbe, CheckinRecord, CheckinRequest, CheckinResult, CheckinRetryMode,
+    CheckinSchedule, CheckinStatus, Clock, NoopAuthRefresh, QuotaRefreshHook, QuotaRefreshOutcome,
+    QuotaRefreshRequest, SystemClock, BATCH_CONCURRENCY, DEFAULT_LEASE_SECS, MAX_BATCH_ACCOUNTS,
 };
 
 const SUMMARY_MAX_CHARS: usize = 512;
@@ -41,6 +41,7 @@ pub struct CheckinService {
     accounts: AccountService,
     executor: Arc<dyn CheckinExecutor>,
     quota: Arc<dyn QuotaRefreshHook>,
+    auth_refresh: Arc<dyn AuthRefreshHook>,
     clock: Arc<dyn Clock>,
     lease: Duration,
 }
@@ -57,9 +58,18 @@ impl CheckinService {
             accounts,
             executor,
             quota,
+            auth_refresh: Arc::new(NoopAuthRefresh),
             clock: Arc::new(SystemClock),
             lease: Duration::seconds(DEFAULT_LEASE_SECS),
         }
+    }
+
+    /// Freshen an expiring credential before the executor runs. OfficeAce
+    /// signs claims with a temporary AK/SK that lives two hours, so a daily run
+    /// would otherwise present an expired `X-Security-Token`.
+    pub fn with_auth_refresh(mut self, hook: Arc<dyn AuthRefreshHook>) -> Self {
+        self.auth_refresh = hook;
+        self
     }
 
     /// Replace the wall clock (tests use a fixed clock; business dates follow it
@@ -402,6 +412,24 @@ impl CheckinService {
                 .await;
         }
 
+        // Refresh before the write. A failure here is not fatal: the executor
+        // still runs and reports the upstream error in its own category.
+        if let Err(error) = self
+            .auth_refresh
+            .refresh(&AuthRefreshRequest {
+                account_id: account.id.clone(),
+                kind: account.kind,
+                region: account.region,
+            })
+            .await
+        {
+            warn!(
+                account = %account.id,
+                provider = %account.provider,
+                "credential refresh before check-in failed: {}",
+                error.message
+            );
+        }
         let authorization = match self
             .accounts
             .authorization_context_for(&account.id, account.kind, account.region)

@@ -5333,3 +5333,52 @@ operation=listModels method=GET url=https://gateway.qoder.com.cn/api/v2/model/li
 `is_vl` 不作为视觉的断言）；fmt/clippy 通过；aarch64-musl 重新构建并部署到 10.0.0.1，
 `/v1/models` 里 qoder-cn 视觉为 `auto`/`qmodel_38max`/`kmodel_latest`/`kmodel` 四个，其余 false。
 同时观察到 qoder-intl 目录只剩 `dfmodel`/`qfmodel`（重新授权后），未深究。
+
+## 70. OfficeAce 启动抓包分析与签到前刷新（2026-10-31，完成）
+
+用户提供两份 Charles trace：`Untitled.trace`（08:59–09:01，浏览器登录，855 请求，
+只有 1 条 OfficeAce 请求 `/v1/claw/auth/callback`）与 `Untitled1.trace`
+（09:28–09:30，桌面客户端启动，132 请求）。后者才是发放积分的完整流程：
+
+```
+POST sts.cn-north-4 /v1/oauth2/tokens                    → 临时 AK/SK，expiration +2h
+GET  agentarts /v1/claw/client-permission-validate       → subscription: null
+POST agentarts /v1/claw/client-subscription              → model_app_key + modelgw 主机
+POST officeace.chat /v1/appapi/auth/validate-iam-user    → cell 会话
+GET  modelgw /v1/subscription                            → 此时还没有 bonus_skus
+POST agentarts /v1/subscription/period                   → 体验版订单（免费）
+POST modelgw /v1/subscription/bonus/claim                → 200
+GET  modelgw /v1/subscription                            → bonus_skus 已出现
+```
+
+签到响应（gzip 解出）：
+
+```json
+{"bonus_skus":[
+ {"activity_id":"bonus-new-user-2026","points":"4000",
+  "effective_time":"2026-10-31T01:29:58.860Z","expired_time":"2027-01-29T01:29:58.860Z"},
+ {"activity_id":"bonus-daily-checkin-2026","points":"100",
+  "effective_time":"2026-10-31T01:29:59.005Z","expired_time":"2026-10-31T15:59:59.000Z"}]}
+```
+
+即：**100 分/天，按北京日 23:59:59 到期**（不是参考实现写的 1000）。所谓“启动自动给”
+就是客户端启动时显式调用 `/v1/subscription/bonus/claim`，不是服务端单独发。
+
+抓到的 claim 请求特征：`content-length: 0`（无 body）、**无** `x-subscription-type`、
+签名头 `content-type;host;x-project-id;x-sdk-date;x-security-token`。本项目当前发送
+`x-subscription-type: v2` + `{}` body（来自参考实现），两者都还没在真实账号上对比过，
+先保留，记录为待验证差异。
+
+根因：签到路径从不刷新凭据。`CheckinService` 只调用
+`accounts.authorization_context_for`（[service.rs:464](file:///D:/codespace/POOL/src/account_service/service.rs#L464)
+直接读库，不刷新），临时 AK/SK 两小时过期后就拿旧 token 去写，得到
+`APIG.0602 the security token has expired`——与 2026-10-30 那次失败完全吻合。
+
+修复：新增 `checkin::AuthRefreshHook`（`src/checkin/auth.rs`），
+`CheckinService::with_auth_refresh` 在执行器前调用；runtime 用
+`LiveAuthRefresh` 接 provider 的 `auth_status_with_context`（OfficeAce 在到期前
+600 s 内轮换临时 AK/SK 并写回）。刷新失败只记 warn，不阻断执行器，错误分类仍由
+执行器给出。新增测试：刷新先于执行器、刷新失败不阻断（760 passed）。
+
+部署后需在管理台点一次「签到」验证：预期不再出现 APIG.0602，`bonus_skus` 出现
+`bonus-daily-checkin-2026`（100 分，当日到期）。

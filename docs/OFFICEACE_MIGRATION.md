@@ -44,13 +44,19 @@ V11 与 V4 只在三处不同（其余逐字节相同，canonical 原语复用
   取 `GET /v1/subscription` 的 `skus[].quotas[]`（`sku_attr_code ==
   officeace_points`）加 `bonus_skus[]`，取「总额 − 已用」，过期条目不计入。
   任何数字缺失都保持 `null`，不写 0。
-- **签到是写操作**：`POST /v1/subscription/bonus/claim`，body 必须是空 JSON
-  对象 `{}`（裸 POST 回 500 `OfficeAce.11020001`），该字节串同时参与 V11 签名。
-  上游对当日重复领取幂等。
+- **签到是写操作**：`POST /v1/subscription/bonus/claim`。官方桌面端 2026-10-31
+  的实际请求是 `content-length: 0`（无 body）、不发送 `x-subscription-type`，
+  签名头为 `content-type;host;x-project-id;x-sdk-date;x-security-token`，返回 200
+  与 `bonus_skus`。本项目沿用参考实现的 `{}` body 与 `x-subscription-type: v2`，
+  尚未在真实账号上对比，两者都需要后续实测确认。上游对当日重复领取幂等。
 - **收益按剩余量增量算**：`points` 是活动累计发放量（桌面端签到、活动页手动领
   都计入），拿它当本次收获会虚高；签到前后各取一次 `bonus_skus` 剩余量做差。
-- 参考实现实测：新用户一次性 4000 分，每日签到 1000 分，各自独立到期。
-  实际数值以账号与上游为准，PolyGate 不写死。
+- 2026-10-31 桌面端实测：新用户 4000 分（一年有效），每日签到 **100 分**，
+  当日 23:59:59（北京）到期；各活动独立到期。实际数值以账号与上游为准，
+  PolyGate 不写死。
+- **临时 AK/SK 只有 2 小时**：桌面端每次启动都会重新走 STS。本项目在签到前
+  通过 `AuthRefreshHook` 让 provider 先刷新（到期前 600 s 内轮换），否则会拿到
+  `APIG.0602 the security token has expired`。
 - 只有聊天凭据（无临时 AK/SK）的账号：签到返回 `Unsupported` 并说明要重新授权；
   额度显示「未知」而不是 0。
 

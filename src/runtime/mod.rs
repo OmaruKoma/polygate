@@ -30,9 +30,10 @@ use crate::account_service::{AccountCredentialStore, AccountService, Authorizati
 use crate::admin::{self, AdminState};
 use crate::api::{self, ApiKeyAuth, ApiState, ModelCatalog};
 use crate::checkin::{
-    CheckinExecutor, CheckinScheduler, CheckinService, CodeArtsCheckinExecutor,
-    MockCheckinExecutor, OfficeAceCheckinExecutor, QoderCheckinExecutor, QuotaRefreshHook,
-    QuotaRefreshRequest, RoutingCheckinExecutor, TraeCheckinExecutor, WorkbuddyCheckinExecutor,
+    AuthRefreshHook, AuthRefreshRequest, CheckinExecutor, CheckinScheduler, CheckinService,
+    CodeArtsCheckinExecutor, MockCheckinExecutor, OfficeAceCheckinExecutor, QoderCheckinExecutor,
+    QuotaRefreshHook, QuotaRefreshRequest, RoutingCheckinExecutor, TraeCheckinExecutor,
+    WorkbuddyCheckinExecutor,
 };
 use crate::config::{Config, ProviderConfig, ProviderKind, Region};
 use crate::error::{ErrorKind, GatewayError};
@@ -124,7 +125,11 @@ impl Gateway {
                 Arc::clone(&registry),
                 (*storage).clone(),
             )),
-        );
+        )
+        .with_auth_refresh(Arc::new(LiveAuthRefresh::new(
+            accounts.clone(),
+            Arc::clone(&registry),
+        )));
         let checkin_scheduler = CheckinScheduler::new(checkin.clone());
         // Discovery uses the first available account per provider. Providers
         // without a usable account contribute no models (never a fake list).
@@ -634,6 +639,59 @@ impl QuotaRefreshHook for LiveQuotaRefresh {
             ..snapshot
         };
         self.storage.quota().save(&snapshot).await?;
+        Ok(())
+    }
+}
+
+/// Freshen an expiring credential before a check-in runs.
+///
+/// OfficeAce signs quota and check-in calls with a temporary AK/SK that lives
+/// about two hours. A daily claim against the stored copy is then rejected with
+/// `APIG.0602` ("the security token has expired"), which is what the 2026-10-30
+/// run hit. `auth_status_with_context` rotates that half when it is close to
+/// expiry and is a no-op probe elsewhere.
+struct LiveAuthRefresh {
+    accounts: AccountService,
+    registry: Arc<ProviderRegistry>,
+}
+
+impl LiveAuthRefresh {
+    fn new(accounts: AccountService, registry: Arc<ProviderRegistry>) -> Self {
+        Self { accounts, registry }
+    }
+}
+
+#[async_trait]
+impl AuthRefreshHook for LiveAuthRefresh {
+    async fn refresh(&self, request: &AuthRefreshRequest) -> Result<(), GatewayError> {
+        let context = self
+            .accounts
+            .authorization_context_for(&request.account_id, request.kind, request.region)
+            .await?;
+        let credential = context.credential.ok_or_else(|| {
+            GatewayError::new(ErrorKind::AuthInvalid, "account has no credential")
+        })?;
+        let provider = self
+            .registry
+            .get(&ProviderKey::new(request.kind, request.region))
+            .ok_or_else(|| {
+                GatewayError::new(
+                    ErrorKind::Unsupported,
+                    format!(
+                        "provider {}-{} is not registered",
+                        request.kind.as_str(),
+                        request.region.as_str()
+                    ),
+                )
+            })?;
+        let provider_context = crate::providers::ProviderContext {
+            account_id: Some(request.account_id.clone()),
+            credential_revision: context.credential_revision,
+            ..Default::default()
+        };
+        provider
+            .auth_status_with_context(&provider_context, &credential)
+            .await?;
         Ok(())
     }
 }

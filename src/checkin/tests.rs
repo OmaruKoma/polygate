@@ -17,9 +17,10 @@ use tokio::sync::Notify;
 use crate::account_service::{AccountService, CreateAccount};
 use crate::accounts::{Account, AuthStatus};
 use crate::checkin::{
-    business_date_at, parse_timezone, CheckinErrorCategory, CheckinExecutor, CheckinOutcome,
-    CheckinPolicy, CheckinProbe, CheckinRetryMode, CheckinScheduler, CheckinService, CheckinStatus,
-    Clock, MockCheckinExecutor, MockCheckinStep, MockQuotaRefreshHook, Sleeper,
+    business_date_at, parse_timezone, AuthRefreshHook, CheckinErrorCategory, CheckinExecutor,
+    CheckinOutcome, CheckinPolicy, CheckinProbe, CheckinRetryMode, CheckinScheduler,
+    CheckinService, CheckinStatus, Clock, MockAuthRefreshHook, MockCheckinExecutor,
+    MockCheckinStep, MockQuotaRefreshHook, QuotaRefreshHook, Sleeper,
 };
 use crate::config::{ProviderKind, Region};
 use crate::error::{ErrorKind, GatewayError};
@@ -1100,4 +1101,59 @@ async fn a_disabled_account_is_skipped_by_the_background_loop() {
     assert!(results.is_empty(), "{results:?}");
     assert_eq!(executor.checkin_calls(), 0);
     assert_eq!(executor.status_calls(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Credential freshening before the executor
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_credential_is_refreshed_before_the_executor_runs() {
+    let fixture = Fixture::memory().await;
+    let refresh = Arc::new(MockAuthRefreshHook::new());
+    let executor: Arc<dyn CheckinExecutor> = fixture.executor.clone();
+    let quota: Arc<dyn QuotaRefreshHook> = fixture.quota.clone();
+    let hook: Arc<dyn AuthRefreshHook> = refresh.clone();
+    let service = CheckinService::new(
+        fixture.storage.clone(),
+        fixture.accounts.clone(),
+        executor,
+        quota,
+    )
+    .with_clock(fixture.clock.clone())
+    .with_auth_refresh(hook);
+    let account = fixture
+        .create(ProviderKind::Officeace, Region::Cn, "officeace")
+        .await;
+
+    let result = service.checkin(&account.id).await.expect("checkin");
+    assert_eq!(result.status, CheckinStatus::Succeeded);
+    assert_eq!(refresh.calls(), 1);
+    assert_eq!(fixture.executor.checkin_calls(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_refresh_does_not_block_the_checkin() {
+    let fixture = Fixture::memory().await;
+    let refresh = Arc::new(MockAuthRefreshHook::new());
+    refresh.fail(true);
+    let executor: Arc<dyn CheckinExecutor> = fixture.executor.clone();
+    let quota: Arc<dyn QuotaRefreshHook> = fixture.quota.clone();
+    let hook: Arc<dyn AuthRefreshHook> = refresh.clone();
+    let service = CheckinService::new(
+        fixture.storage.clone(),
+        fixture.accounts.clone(),
+        executor,
+        quota,
+    )
+    .with_clock(fixture.clock.clone())
+    .with_auth_refresh(hook);
+    let account = fixture
+        .create(ProviderKind::Officeace, Region::Cn, "officeace")
+        .await;
+
+    let result = service.checkin(&account.id).await.expect("checkin");
+    assert_eq!(result.status, CheckinStatus::Succeeded);
+    assert_eq!(refresh.calls(), 1);
+    assert_eq!(fixture.executor.checkin_calls(), 1);
 }

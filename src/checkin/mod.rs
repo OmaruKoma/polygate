@@ -11,9 +11,11 @@
 //! ```
 //!
 //! The provider registry is deliberately **not** involved: the runtime wires each
-//! real adapter as its own [`CheckinExecutor`]. This module never bypasses a
-//! captcha, never refreshes a token and never queries real quota.
+//! real adapter as its own [`CheckinExecutor`], and an [`AuthRefreshHook`]
+//! (also runtime-owned) freshens an expiring credential before the call. This
+//! module never bypasses a captcha and never queries real quota.
 
+mod auth;
 mod codearts;
 mod executor;
 mod model;
@@ -28,6 +30,7 @@ mod workbuddy;
 #[cfg(test)]
 mod tests;
 
+pub use auth::{AuthRefreshHook, AuthRefreshRequest, MockAuthRefreshHook, NoopAuthRefresh};
 pub use codearts::CodeArtsCheckinExecutor;
 pub use executor::{
     CheckinExecutor, CheckinProbe, MockCheckinExecutor, MockCheckinStep, RoutingCheckinExecutor,
