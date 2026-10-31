@@ -8,3 +8,8 @@
 web/node_modules
 web/dist
 .local
+
+# Local packet captures contain live tokens; never commit them.
+/Untitled*.trace
+/Untitled*.chlz
+/Untitled*.csv
