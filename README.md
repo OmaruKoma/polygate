@@ -5,8 +5,8 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/version-0.1.0-5bc4b5" alt="Version">
-  <img src="https://img.shields.io/badge/tests-746%20passing-59bd91" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.2.1-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/tests-760%20passing-59bd91" alt="Tests">
   <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
 </p>
 
@@ -301,11 +301,25 @@ IPQ6000 / MT7986 / IPQ807x 等 Cortex-A53 平台可直接运行。procd 启动�
 环境变量模板在 [`deploy/openwrt/`](deploy/openwrt/)，步骤见
 [`docs/DEPLOYMENT.md` §12](docs/DEPLOYMENT.md#12-openwrt--kwrtaarch64-软路由)。
 
+**普通服务器（x86_64）**：Releases 里提供四个产物，按目标平台选一个即可：
+
+| 文件 | 平台 | 链接方式 |
+| --- | --- | --- |
+| `polygate-<版本>-x86_64-linux-musl` | x86_64 服务器 / VPS / 容器 | 静态，无 libc 依赖 |
+| `polygate-<版本>-aarch64-linux-musl` | 软路由 / ARM 盒子 | 静态 |
+| `polygate-<版本>-x86_64-linux-gnu` | 常见 x86_64 发行版 | glibc ≥ 2.17 |
+| `polygate-<版本>-aarch64-linux-gnu` | ARM64 云主机 / 树莓派 64 位 | glibc ≥ 2.17 |
+
+不确定就用 musl 静态版：拷进 `/usr/local/bin/polygate`，`chmod +x` 后配好
+`POLYGATE_API_KEY` 与 `config.toml` 直接运行。
+
 跨架构构建：
 
 ```bash
 cargo install cargo-zigbuild --locked
 cargo zigbuild --release --target aarch64-unknown-linux-musl
+cargo zigbuild --release --target x86_64-unknown-linux-musl
+cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17
 ```
 
 ## 配置速查

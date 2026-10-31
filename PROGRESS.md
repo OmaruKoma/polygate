@@ -5382,3 +5382,13 @@ GET  modelgw /v1/subscription                            → bonus_skus 已出�
 
 部署后需在管理台点一次「签到」验证：预期不再出现 APIG.0602，`bonus_skus` 出现
 `bonus-daily-checkin-2026`（100 分，当日到期）。
+
+## 71. v0.2.1：签到刷新修复与四平台产物（2026-10-31，完成）
+
+- 签到前刷新凭据（§70）合入，版本 0.2.0 → 0.2.1。
+- 新增构建目标并产出：`x86_64-unknown-linux-musl`、`x86_64-unknown-linux-gnu`
+  （zigbuild glibc 2.17）、`aarch64-unknown-linux-gnu`（同上），与原有
+  `aarch64-unknown-linux-musl` 一起发布。
+- 验证：aarch64-musl 真机运行；x86_64 musl/gnu 在 WSL Debian 执行 `--version`
+  返回 `polygate 0.2.1`；aarch64-gnu 仅完成构建，未在 ARM64 glibc 环境执行。
+- README 增加平台选择表与构建命令；部署脚本与文档中的文件名同步到 0.2.1。
