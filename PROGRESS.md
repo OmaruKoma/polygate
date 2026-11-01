@@ -5784,3 +5784,13 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 
 未覆盖：管理台导入端点没有自动化测试（需要把订单中心打桩进 `AdminState`），
 以实况导入代替；对话/模型/签到保持 Unsupported。
+
+### 82.1 v0.2.5
+
+- 版本 0.2.4 → 0.2.5；README 徽章 783 tests，部署脚本/文档文件名同步。
+- 783 passed，clippy/fmt 通过；aarch64-musl 已部署到路由器（`polygate 0.2.5`，
+  doctor 列出 10 个 Provider，`/admin/` 200）。
+- 发布：https://github.com/OmaruKoma/polygate/releases/tag/v0.2.5，四个产物
+  （aarch64/x86_64 × musl/gnu）。
+- 路由器上尚未导入算力豆账号：需要在管理台 Suanlidou 页粘贴 Qoder 访问令牌
+  （或新的 `sso_agent_…` 链接令牌），本机实况导入已验证端点可用。
