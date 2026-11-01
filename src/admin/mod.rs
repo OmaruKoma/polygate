@@ -333,10 +333,6 @@ pub fn router(state: AdminState) -> Router {
             post(api::import_loomy_session),
         )
         .route(
-            "/admin/api/auth/suanlidou/session",
-            post(api::import_suanlidou_session),
-        )
-        .route(
             "/admin/api/auth/codearts/start",
             post(api::start_codearts_auth),
         )

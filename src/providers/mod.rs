@@ -37,14 +37,12 @@ pub mod loomy;
 pub mod officeace;
 pub mod profile;
 pub mod qoder;
-pub mod suanlidou;
 pub mod trae;
 pub mod workbuddy;
 
 pub use codearts::{ClientHeaders, CodeArtsHttp, CodeArtsProvider};
 pub use loomy::LoomyProvider;
 pub use officeace::OfficeAceProvider;
-pub use suanlidou::SuanlidouProvider;
 pub use trae::provider::TraeProvider;
 pub use workbuddy::provider::WorkbuddyProvider;
 

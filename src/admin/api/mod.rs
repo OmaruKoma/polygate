@@ -1354,69 +1354,6 @@ pub struct LoomySessionRequest {
     pub expires_at: Option<i64>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct SuanlidouSessionRequest {
-    /// The order-center SSO token (`sso_agent_...`) from the CMCC usage link.
-    pub session: String,
-    #[serde(default)]
-    pub name: Option<String>,
-}
-
-/// Validate a Suanlidou SSO token against the order center, then store it.
-/// The probe also returns the current 算力豆 balance so the operator sees the
-/// account is live before it exists in the pool.
-pub async fn import_suanlidou_session(
-    State(state): State<AdminState>,
-    Json(request): Json<SuanlidouSessionRequest>,
-) -> Response {
-    let session = request.session.trim().to_string();
-    if session.len() < 16 || session.len() > 512 || session.chars().any(char::is_whitespace) {
-        return json_error(&GatewayError::bad_request(
-            "paste the SSO token only (one value, no spaces)",
-        ));
-    }
-    let key = ProviderKey::new(ProviderKind::Suanlidou, Region::Cn);
-    let Some(provider) = state.registry.get(&key) else {
-        return json_error(&GatewayError::new(
-            ErrorKind::NoCapacity,
-            "provider suanlidou is not enabled in the configuration; add a [[providers]] block with kind = \"suanlidou\" and restart",
-        ));
-    };
-    // `sso_agent_*` values are the short-lived link tokens the order center
-    // accepts directly; anything else is taken as a Qoder CN access token that
-    // the provider exchanges for a fresh CMCC usage link on every probe.
-    let credential_key = if session.starts_with("sso_agent_") {
-        "sso_token"
-    } else {
-        "access_token"
-    };
-    let mut fields = serde_json::Map::new();
-    fields.insert(credential_key.to_string(), json!(session));
-    let candidate = crate::accounts::Credential::from_value(Value::Object(fields));
-    let snapshot = match provider.quota(&candidate).await {
-        Ok(snapshot) => snapshot,
-        Err(error) => return json_error(&error),
-    };
-    match account::persist_suanlidou_session(
-        &state,
-        credential_key,
-        session,
-        request.name.as_deref(),
-    )
-    .await
-    {
-        Ok(account) => json_ok(json!({
-            "account_id": account.id,
-            "name": account.name,
-            "external_id": account.external_id,
-            "unit": snapshot.unit.as_str(),
-            "total": snapshot.total,
-            "remaining": snapshot.remaining,
-        })),
-        Err(error) => json_error(&error),
-    }
-}
-
 /// Import a Loomy login session and probe it before storing anything.
 ///
 /// The probe is `GET /models`, which is read-only: a rejected session is never

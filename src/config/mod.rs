@@ -226,7 +226,6 @@ pub enum ProviderKind {
     Workbuddy,
     Loomy,
     Officeace,
-    Suanlidou,
     Mock,
 }
 
@@ -239,7 +238,6 @@ impl ProviderKind {
             ProviderKind::Workbuddy => "workbuddy",
             ProviderKind::Loomy => "loomy",
             ProviderKind::Officeace => "officeace",
-            ProviderKind::Suanlidou => "suanlidou",
             ProviderKind::Mock => "mock",
         }
     }
@@ -251,7 +249,6 @@ impl ProviderKind {
             "workbuddy" => Some(ProviderKind::Workbuddy),
             "loomy" => Some(ProviderKind::Loomy),
             "officeace" => Some(ProviderKind::Officeace),
-            "suanlidou" => Some(ProviderKind::Suanlidou),
             "mock" => Some(ProviderKind::Mock),
             _ => None,
         }
@@ -264,7 +261,6 @@ impl ProviderKind {
             ProviderKind::Workbuddy => "Tencent WorkBuddy",
             ProviderKind::Loomy => "iFlytek Loomy",
             ProviderKind::Officeace => "Huawei OfficeAce",
-            ProviderKind::Suanlidou => "China Mobile Suanlidou",
             ProviderKind::Mock => "Mock (development)",
         }
     }

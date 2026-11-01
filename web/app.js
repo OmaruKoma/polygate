@@ -66,25 +66,6 @@
       cnLoginOnly: true,
       regionHint: "Loomy 只有中国站一个部署，站点固定为 CN。",
     },
-    suanlidou: {
-      label: "Suanlidou",
-      authPath: "suanlidou",
-      siteNote:
-        "算力豆（中国移动）没有浏览器授权入口，也没有签到：只能导入 Qoder 中国移动联名权益页里用量日志链接的 SSO 令牌，并查询算力豆余量。PolyGate 只保存令牌，不保存手机号或密码，也不生成设备身份。",
-      startLabel: "导入令牌",
-      successToast: "Suanlidou 账号已导入",
-      supportsCheckin: false,
-      sessionImport: true,
-      sessionPath: "suanlidou",
-      sessionPattern: "^[0-9A-Za-z._:-]{16,512}$",
-      sessionLabel: "SSO 令牌或 Qoder 访问令牌",
-      sessionPlaceholder: "sso_agent_… 令牌，或 Qoder CN 访问令牌",
-      sessionHint:
-        "sso_agent_ 令牌来自 Qoder 中国移动联名权益页的用量日志链接（链接里 token= 后面的值），但它很快过期；粘贴 Qoder CN 访问令牌则可每次查询时自动换取新链接。PolyGate 只保存这一个值。",
-      sessionUserId: false,
-      cnLoginOnly: true,
-      regionHint: "算力豆只有中国移动一个站点，站点固定为 CN。",
-    },
     officeace: {
       label: "OfficeAce",
       authPath: "officeace",
@@ -604,10 +585,6 @@
   }
 
   function importedSessionSummary(result) {
-    if (result && typeof result.remaining === "number") {
-      const unit = result.unit === "beans" ? "算力豆" : result.unit || "";
-      return `（余量 ${result.remaining} ${unit}）`;
-    }
     if (result && typeof result.models === "number") {
       return `（${result.models} 个模型，重启网关后进入 /v1/models）`;
     }
@@ -1420,7 +1397,7 @@
     if (quota.status === "unknown" || quota.remaining === null || quota.remaining === undefined) {
       return '<span class="badge muted">未知</span>';
     }
-    const unit = { credits: "积分", beans: "算力豆", tokens: "tokens", requests: "次" }[quota.unit] || "未知单位";
+    const unit = { credits: "积分", tokens: "tokens", requests: "次" }[quota.unit] || "未知单位";
     const total = quota.total !== null && quota.total !== undefined ? ` / ${quota.total}` : "";
     return `<span class="strong">${esc(quota.remaining)}${total}</span> <span class="tiny">${esc(unit)}</span>`;
   }

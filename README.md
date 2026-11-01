@@ -5,9 +5,9 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/version-0.2.6-5bc4b5" alt="Version">
-  <img src="https://img.shields.io/badge/tests-783%20passing-59bd91" alt="Tests">
-  <img src="https://img.shields.io/badge/providers-10-5bc4b5" alt="Providers">
+  <img src="https://img.shields.io/badge/version-0.2.7-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/tests-776%20passing-59bd91" alt="Tests">
+  <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
 </p>
 
 <p align="center">
@@ -49,7 +49,7 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 
 ## 截图
 
-部署在软路由上的实际控制台（9 个 Provider、10 个账号，真实上游流量）：
+部署在软路由上的实际控制台（9 个 Provider、9 个账号，真实上游流量）：
 
 <p align="center"><img src="docs/images/dashboard.png" width="900" alt="仪表盘"></p>
 
@@ -108,7 +108,6 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | Loomy（讯飞） | CN | 导入桌面端会话（14 天） | **LiveVerified** |
 | OfficeAce（华为 AgentArts） | CN | 华为云授权（PKCE + DPoP + STS） | **LiveVerified** |
 | TRAE（字节） | CN | 登录态 | MockVerified（无真实账号） |
-| Suanlidou（中国移动算力豆） | CN | 导入 SSO 令牌（Qoder CMCC 用量链接） | **LiveVerified**（仅算力豆余量；无对话、无签到） |
 | Mock | — | 无 | 仅测试与本地演示 |
 
 在软路由上的实际部署里，除 TRAE 外的每个 Provider 都有真实账号完成授权：
@@ -118,7 +117,7 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | 授权 | CodeArts CN/Intl、Qoder CN/Intl、WorkBuddy CN/Intl、Loomy、OfficeAce |
 | 模型目录 | CodeArts CN（10）/Intl（2）、Qoder CN/Intl（11/15）、WorkBuddy CN/Intl（15/23）、Loomy（10）、OfficeAce（24） |
 | 对话（网关日志 200） | CodeArts CN、WorkBuddy CN（含 SSE）、Loomy |
-| 额度 | CodeArts CN、Qoder CN、Loomy、OfficeAce、Suanlidou（算力豆） |
+| 额度 | CodeArts CN、Qoder CN、Loomy、OfficeAce |
 | 每日签到 | Qoder CN/Intl（+100 credits）、WorkBuddy CN（+100 credits） |
 
 CodeArts Intl 只暴露 `GLM-5.1`、`GLM-5.2` 两个模型（CN 同账号有 10 个），对话与 SSE 均已实测；

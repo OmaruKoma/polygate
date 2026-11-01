@@ -5806,3 +5806,21 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 - 模型管理页没有 `suanlidou` 分组是**预期行为**：该 Provider 只声明 `quota`，
   `model_discovery = false`，没有可发现的模型 ID，重启也不会出现分组。
 - 783 passed，fmt/clippy 通过；0.2.6 四产物发布并部署到路由器。
+
+## 84. v0.2.7：移除 Suanlidou（算力豆，2026-11-01）
+
+- 操作者决定整体撤销 M81–M83 的算力豆功能：该 Provider 只有余量查询、没有对话与签到，
+  维护成本（短时 SSO 链接令牌 + 桌面端令牌提取）与收益不成比例；同时删除 GitHub
+  release v0.2.5/v0.2.6 与路由器上的相关数据。
+- 代码移除：`src/providers/suanlidou/` 目录、`ProviderKind::Suanlidou`
+  （[config/mod.rs](file:///D:/codespace/POOL/src/config/mod.rs)）、
+  `QuotaUnit::Beans`（[quota/mod.rs](file:///D:/codespace/POOL/src/quota/mod.rs)）、
+  runtime 注册分支、`POST /admin/api/auth/suanlidou/session` 与其
+  `import_suanlidou_session` / `persist_suanlidou_session` 实现。
+- Web/文档：`web/app.js` 的 `PROVIDERS` 条目与 `beans` 单位映射、`web/index.html`
+  侧栏按钮、`config.example.toml` 示例块、`docs/PROVIDERS.md` §9 行与 §14 整节、
+  `README.md` Provider/额度表行一并删除；`tools/qoder-token.py` 删除。
+- 历史记录 §81–§83 保留（如实记录曾发布过该功能），不再维护。
+- 版本 0.2.6 → 0.2.7；README 徽章 version 0.2.7 / tests 776 / providers 9。
+- 验证：`cargo fmt --all`、`cargo test`（776 passed）、
+  `cargo clippy --all-targets -- -D warnings` 均通过。
