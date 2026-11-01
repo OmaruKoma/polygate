@@ -5392,3 +5392,266 @@ GET  modelgw /v1/subscription                            → bonus_skus 已出�
 - 验证：aarch64-musl 真机运行；x86_64 musl/gnu 在 WSL Debian 执行 `--version`
   返回 `polygate 0.2.1`；aarch64-gnu 仅完成构建，未在 ARM64 glibc 环境执行。
 - README 增加平台选择表与构建命令；部署脚本与文档中的文件名同步到 0.2.1。
+
+## 72. 无状态 Provider 按请求轮转账号（2026-10-31，完成）
+
+现象：三个 OfficeAce 账号积分消耗不平衡（4396.9 / 4583.8 / 4584.8），12 小时请求日志
+331 / 119 / 59，其中一个 `auto-<首条用户消息哈希>` 会话独占 176 次请求。
+
+根因：`SessionRouter` 对所有 Provider 都做 24h 会话绑定；`auto-` 键由
+`model + 首条用户消息` 哈希而来，多轮对话每次都会带着同一条首条消息，因此整段对话在
+整个 TTL 内固定落在一个账号上。只有 CodeArts 真正使用 `upstream_session_id`
+（`chat_id_for`），其余 Provider（Qoder / WorkBuddy / Loomy / OfficeAce / TRAE）
+上游无状态、每次重发完整历史，绑定只带来偏科，没有任何续接收益。
+
+修复：
+
+- `SessionRouter` 增加 `sticky_kinds`，默认只有 `ProviderKind::Codearts`；
+  `with_sticky_kinds` 可覆盖。
+- 非粘性 kind 走新的 `open_stateless`：`Scheduler` 每请求选号，
+  `SessionBindingService::acquire_slot` 只取会话门锁 + 账号并发槽（`AccountSlot`），
+  不读不写 `sessions` 表；`RouteLease` 内部改为 `HeldLease::{Binding, Slot}`。
+- 无状态路由的 `ProviderContext.upstream_session_id` 为 `None`（原来是空字符串），
+  上游会话失效类错误直接忽略，认证类错误仍写回账号状态。
+- 文档：`docs/ARCHITECTURE.md` §2.5 增加 M15-G 说明；README 特性行同步。
+
+验证（本地）：
+
+- `cargo build`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。
+- `cargo test`：762 passed（新增 `stateless_kinds_rotate_every_request_and_persist_nothing`、
+  `stateless_routes_skip_excluded_accounts_and_blame_auth_failures`；
+  `src/api/session_tests.rs` 显式声明 Qoder 为粘性 kind，继续覆盖粘性租约生命周期）。
+
+真机验证（路由器 10.0.0.1，aarch64-musl，2026-10-31 19:50 +08）：
+
+- 部署新二进制并重启 `polygate`，`--version` 与监听 `10.0.0.1:8787` 正常。
+- 固定 `x-session-id: rotation-check`、同一首条消息，连续 6 次
+  `officeace-cn::deepseek-v4.1-flash` 请求全部 200（0.72–1.09 s）；
+  `request_logs` 中三个账号各 2 次（b930…/d371…/d3a2…），
+  且 `sessions` 表中 `rotation-check` 行数为 0。
+- 同一状态下 OfficeAce 请求不再出现 §69 的 81 s 卡顿（OpenClash 直连规则）。
+
+## 73. CodeArts 签到活动 ID 修正（2026-11-01，已部署，待管理台点击复验）
+
+现象：三个 CodeArts 账号都显示“今日已签”，但积分没涨；hsggga 显示“结果未知”，
+管理台提示 “CodeArts daily check-in activity is not available”。
+
+抓包（`newhuawei.trace`，Charles，2026-11-01 09:55，网页端）：
+
+```
+GET  /chat/PromptCenterService/v1/ops/delivery?channel=WEB
+       -> items[]: campaignId 34, type USER_LOGIN, 每日签到领100积分, benefitAmount 100
+                   extra.triggerMode = MANUAL_CLAIM
+POST /chat/PromptCenterService/v1/ops/claim
+       {"campaignId":"34","idempotentKey":"claim_34_1793498159480","channel":"WEB"}
+POST /chat/PromptCenterService/v1/ops/confirm  {"campaignId":"34"}
+GET  /v1/ops/delivery  -> campaign 34 status CONFIRMED
+```
+
+根因：实现沿用了 Coding2API 的 `campaignId = 1` + `channel = IDE`。该账号的 delivery
+里没有 campaign 1，`daily_campaign()` 返回 `None`，于是每个账号都被记为
+“activity is not available”（状态却是 `already_checked_in`），从未真正调用 claim。
+
+修复（[codearts.rs](file:///D:/codespace/POOL/src/checkin/codearts.rs)）：
+
+- 按 `type == "USER_LOGIN"` 从 delivery 选活动，campaign id 动态读取，不再写死；
+- delivery/claim 渠道改为抓包里的 `WEB`；claim/confirm 的 `campaignId` 按网页端发送字符串；
+- `idempotentKey` 用发现到的 id（`claim_34_<epoch_ms>`）；新增“id 变化仍可用”和
+  “没有 USER_LOGIN 活动”两条测试。763 tests passed，clippy/fmt 通过。
+
+部署与数据修复（路由器，2026-11-01 10:02 +08）：
+
+- 换二进制前停止服务并备份 `/tmp/polygate.old2`；用本地 Python 把当天三条
+  `checkin_runs`（两条错误的 `already_checked_in`、一条 `transport` 导致的 `unknown`）
+  改为 `failed`（summary 注明 “campaign id 1 does not exist … re-run”），
+  以便管理台「签到」按 Manual 重试真正执行。停服后先取备份再改：路由器
+  `/etc/polygate/polygate.db.bak-20261101`，本地修改前副本 `D:/tmp` 同级 `pg_fix.backup.db`。
+- 重启后 `10.0.0.1:8787` 正常监听，`--version` 为 `polygate 0.2.1`。
+- 待办：在管理台对三个 CodeArts 账号点一次「签到」，预期各 +100 积分、状态
+  `already_checked_in` 且 summary 来自真实 claim 响应。
+
+## 74. 签到重复点击不再回放“+100”（2026-11-01，已部署）
+
+现象：OfficeAce 当天已签到后，再点「执行签到」仍然提示“OfficeAce granted 100 points”。
+
+证据（路由器库 `checkin_runs`）：每个账号当天只有一行、`attempt_count = 1`，
+`executor.checkin_calls` 也只会执行一次——重复点击并没有再次领取。
+问题是 `CheckinService` 对已完成的当天记录走 `record.to_result(true)`，把首次运行的
+summary 原样回放，前端 toast 直接显示它。
+
+修复（[service.rs](file:///D:/codespace/POOL/src/checkin/service.rs)）：
+
+- `RunClaim::Existing(record)` 改为 `replay_result(record)`：存储状态不变，
+  但 `Succeeded` 的回放 summary 统一为
+  `already checked in today; nothing was claimed again`；
+- 顺带修复 OfficeAce 的一个假成功：`get_subscription` 失败时原来 `unwrap_or(Null)`，
+  基线为空会把全部剩余积分算成本次收益（可能报 +4600）。现在读取失败直接返回
+  `UpstreamServer`（签到结果记为 Unknown），且不发 claim。
+- 测试：重复签到 summary 断言、基线读取失败不 claim；764 passed，clippy/fmt 通过。
+- 已构建 aarch64-musl 并重启路由器服务（`10.0.0.1:8787`，`polygate 0.2.1`）。
+
+## 75. Qoder 免费 Qwen 失败定位与模型级错误分类（2026-11-01，已部署）
+
+现象：`qoder_deepseek_flash`（dfmodel）正常且开始计费，但免费 `qfmodel`（Qwen3.8-Flash）持续失败。
+
+实测（部署后，路由器 → 网关 → Qoder）：
+
+```
+POST qoder-cn::qfmodel   x3   -> 404 model_unavailable, 0.08–0.18 s
+  {"message":"Qoder model node failed: {\"code\":\"400\",
+   \"message\":\"[FAIL]node:oa_qwen-plus-main msg:Execution failed: null\"}"}
+POST qoder-intl::qfmodel      -> 同样的 node failure（节点名 oa_qwen-plus-2025-04-28）
+POST qoder-cn::dfmodel        -> 200（同一账号，排在 3 次 qwen 失败之后仍可用）
+```
+
+结论：是 Qoder 侧免费 `oa_qwen-plus-*` 执行节点返回 `Execution failed: null`，与请求形状、账号、
+区域都无关；同一凭据调用 dfmodel 正常。网关内没有可改的参数能让该节点工作。
+
+顺带修掉一个真实的连带故障：此类 node failure 原来映射 `UpstreamServer`，属 Uncertain，
+连续 2–3 次就把**整个账号**放进冷却（日志里随后出现
+`no available qoder-cn account: … cooling down after repeated failures`），连 dfmodel 也被挡住。
+现在 `[FAIL]node:` 映射为 `ModelUnavailable`（[error.rs](file:///D:/codespace/POOL/src/providers/qoder/error.rs)），
+按 Client 分类：不冷却账号、不换另一个账号重试，按目标回退；账号对其它模型继续可用。
+764 tests 通过，clippy/fmt 通过；aarch64-musl 已部署并重启（`10.0.0.1:8787`）。
+
+## 76. Qoder Intl 签到抓包与空列表降级识别（2026-11-01，已部署）
+
+用户提供 `qoder-intel.trace`（Charles，2026-11-01 11:38，Qoder 桌面端 0.5.1，
+`openapi.qoder.sh`）。抓到的国际版签到流程与 CN 完全同构：
+
+```
+GET  /sash/api/v1/me/campaigns
+  -> showCampaign: true, campaigns: [
+       {campaignId:"01a1950b-…", campaignKey:"act-20261101-825",
+        actionType:"CLAIM_BENEFIT", claimStatus:"CLAIMABLE",
+        benefit:{kind:"CREDITS", amount:100, validity:{RELATIVE_DAYS,30}},
+        startAt:1793498400 /* 10:00 +08 */},
+       {campaignId:"01a159af-…", actionType:"VIEW_DETAILS", claimStatus:"CLAIMED"}]
+POST /sash/api/v1/me/campaigns/01a1950b-…/claim   (content-length: 0)
+  -> {"status":"CLAIMED","replayed":false,"benefit":{"amount":100}, "expiresAt":"2026-12-01T03:38:39Z"}
+```
+
+用抓包里的桌面 token 复现（只读 + 对已领活动做幂等 replay，2026-11-01 11:41）：
+
+- 不带 `cosy-clienttype`：200，`showCampaign:false`，`campaigns: []`（118 字节）；
+- 带 `cosy-clienttype: 10`：200，2 个 campaign；我们的完整头集（UA `Go-http-client/2.0`、
+  origin/referer、x-machine-id/x-session-id）同样返回 2 个；
+- claim 用 `{}`、空 body、空 body+JSON 三种写法都返回 200 `replayed:true`（body 形状不影响）；
+- 无效 token 返回 401 `TOKEN_EXPIRE`（会走 AuthInvalid，不是 Unsupported）。
+
+问题：今天 11:36 网关对 Intl 的自动签到记录为 `unsupported`（attempt 3），summary 是通用
+“provider does not support check-in”。同一账号 11:41 用同样请求能拿到 campaign，说明当时上游
+返回了空列表；原实现把“空列表”一律当 Unsupported，无法区分
+（a）账号确实没被投放活动、（b）上游静默降级。
+
+修复（[qoder.rs](file:///D:/codespace/POOL/src/checkin/qoder.rs)）：
+
+- 空列表时看顶层 `showCampaign`：`false` → Unsupported（真正没有活动）；
+  `true` → 可重试的 Upstream 失败（“response was degraded upstream”），不落死状态；
+  `check_status` 对应返回 `Unknown` 而不是 Unsupported。
+- 文档补充 Intl 签到事实（10:00 UTC+8 刷新、30 天有效、claim 空 body 等价）。
+- 新增 2 条测试；766 passed，clippy/fmt 通过；aarch64-musl 已部署并重启。
+
+待复验：管理台对 Qoder Intl 点一次「签到」（今天的记录是 unsupported，Manual 允许重跑）。
+上游今天已由桌面端领取，预期返回 already checked in 而不是 unsupported。
+
+## 77. Qoder “无签到活动”账号的 showCampaign 语义（2026-11-01）
+
+用户提供 `Untitledtest1.trace`（Charles，2026-11-01 11:50，Qoder 桌面端 0.5.1，
+`openapi.qoder.sh`，账号 uid `01a18cd3-…`，与池内两个 Qoder 账号均不同）。
+
+抓到的关键事实：
+
+```
+GET /sash/api/v1/me/campaigns   (cosy-clienttype: 10)
+  -> {"uid":"01a18cd3-…","showCampaign":true,"claimable":false,
+      "campaigns":[{ actionType:"VIEW_DETAILS", claimStatus:"CLAIMED",
+                     campaignKey:"act-20261020-944" /* 首购加赠促销 */ }]}
+```
+
+结论：
+
+- **活动列表按账号下发**：该账号今天没有每日签到活动，但列表并不为空，仍有全局订阅促销。
+  所以“没有签到”= 非空列表里**没有 `CLAIM_BENEFIT`**，而不是空列表。
+- **`showCampaign` 不是账号活动标记**，而是增长页功能开关：缺 `cosy-clienttype` 时为 false，
+  该账号无签到活动却仍是 true。此前“空列表 + showCampaign:true ⇒ 上游降级”的判断保留，
+  但不能再把 showCampaign 当作“是否投放活动”的依据。
+- 抓包同时确认 `POST …/{campaignId}/claim` 对已领活动返回 `replayed:true`（10-30 领取的那次）。
+
+代码调整（[qoder.rs](file:///D:/codespace/POOL/src/checkin/qoder.rs)）：
+
+- `checkin`：无 `CLAIM_BENEFIT` 的列表 → `Err(Unsupported)`，summary 明确写
+  “Qoder did not target this account with a daily check-in campaign”（此前是通用
+  `Unsupported` → “provider does not support check-in”，对按账号判定的场景有误导）；
+  `showCampaign:false` + 空列表同样返回带原因的 Unsupported。
+- `check_status`：确认无签到活动时返回 `Confirmed(Unsupported)`；列表里有 `CLAIM_BENEFIT`
+  但状态既非可领也非已领（如 `BLOCKED`）时返回 `Unknown`，`checkin` 对应 `Unknown` 且不发 claim。
+
+测试：新增 `an_account_without_the_daily_campaign_is_settled_unsupported`（真实抓包形状）、
+`a_daily_campaign_in_an_unknown_state_is_not_claimed`；更新 2 条旧断言。768 passed，
+clippy/fmt 通过；aarch64-musl 已部署并重启（11:56），`/admin/` 200。
+
+## 78. WorkBuddy 思考开关未透传（2026-11-01）
+
+现象：经 PolyGate 调用 WorkBuddy 上游时，模型的思考内容直接出现在可见输出里。
+
+根因（代码证据）：
+
+- [convert.rs](file:///D:/codespace/POOL/src/providers/workbuddy/convert.rs) 的 `build_body`
+  只拼 model/messages/stream/tools/采样参数，**完全丢弃** `ChatRequest.reasoning_effort`
+  与 `enable_thinking`（这两种字段在 Qoder 适配时已加进内部协议）。
+- 上游只认扁平 `reasoning_effort` 和 `thinking:{"type":"disabled"}`。缺档位时由模型默认决定，
+  部分模型会把思维链写进可见 `content`（`docs/WORKBUDDY_MIGRATION.md` §5；
+  参考 `workbuddy2api/upstream_compat.py` 的 `apply_thinking_intent`）。也就是说：
+  **上游是最终决定者，但“没告诉它”是我们这一侧造成的。**
+
+实测旁证（2026-11-01 13:22，路由到 workbuddy-intl/deepseek-v4.1-flash 的请求）：
+未带档位时该模型仍返回 `reasoning_content`，说明不是所有模型都会内联；
+但客户端一旦表达“关闭思考/指定档位”，旧代码等于完全忽略，行为随模型漂移。
+
+修复：
+
+- `build_body` 末尾新增 `apply_thinking`：
+  - `reasoning_effort` 非空 → 去空格、小写后扁平透传；
+  - `off/none/disabled/false/0` → 改写为 `thinking:{"type":"disabled"}`，不发档位
+    （上游对 `off` 返回 11150，`none` 反而开启思考）；
+  - `enable_thinking=false` → 同上关闭；
+  - `enable_thinking=true` 且无档位 → `reasoning_effort:"high"`（参考实现的偏好档）；
+  - 调用方未表态 → 两个字段都不发，行为与旧版一致。
+- 同步 `docs/PROVIDERS.md` §4 与 `docs/WORKBUDDY_MIGRATION.md` §9。
+
+测试：新增 4 条（透传/关闭/只开不给档位/静默不发），WorkBuddy 模块 82 条通过，
+全量 772 passed，clippy/fmt 通过；aarch64-musl 已部署并重启（13:33）。
+
+线上核对（2026-11-01 13:33）：
+
+- WorkBuddy Intl 独占模型 `kimi-k3.1-pro-highspeed`：首条不是 system 时返回 11128；
+  补上 system 后返回 **11158 `model [...] is not allowed for user type
+  [personal_free_user]`**，即该账号没有这个模型的权限（ModelUnavailable），
+  **不是**会话头适配问题——11128 在这里掩盖了真实的权限错误。
+- WorkBuddy CN 独占模型 `kimi-k3-1`：带 `thinking:{"type":"disabled"}` 与不带任何思考字段，
+  两种请求都返回 `reasoning_content`（12 / 7 帧）。说明该模型本身忽略关闭开关，
+  思考去向由上游模型决定，不是网关再把思考塞回 content。
+- 因此本次修复解决的是“调用方的思考意图被丢弃”，无法强制一个 always-thinking 模型停止思考。
+
+## 79. v0.2.2 发布（2026-11-01，完成）
+
+自 v0.2.1 起的变更：
+
+- 调度：只有 CodeArts 使用会话粘性，其余 Provider 每请求轮换，修复 OfficeAce
+  单账号吃满 176 个请求的问题（§72）。
+- CodeArts 签到：按 `type=USER_LOGIN` 动态选择当日活动、`channel=WEB`、携带
+  `campaignId`（§73）；签到重放摘要不再重复报告“已领取 N 分”（§74）。
+- OfficeAce：基线读取失败不再当成空快照，避免虚报收益（§74）。
+- Qoder：`[FAIL]node` 归为 ModelUnavailable，不再冷却整账号（§75）；Intl 签到抓包、
+  `showCampaign` 语义修正、无活动账号返回带原因的 Unsupported（§76/§77）。
+- WorkBuddy：思考开关按调用方意图翻译（档位透传 / `thinking.disabled` / 开启无档位取
+  `high`），不再丢弃 `reasoning_effort` 与 `enable_thinking`（§78）；
+  `11158` 归为模型无权限（ModelUnavailable），并记录 `11128` 会掩盖它（§78）。
+- 版本 0.2.1 → 0.2.2；`cargo fmt --check`、`clippy -D warnings` 通过；`cargo test`
+  773 passed。
+- 产物：`polygate-0.2.2-{aarch64,x86_64}-linux-{musl,gnu}` 四个，aarch64-musl
+  为软路由部署用；版本号写入 README 徽章、`deploy/openwrt/polygate.init` 与
+  `docs/DEPLOYMENT.md`。
+- `.gitignore` 从 `/Untitled*.trace` 放宽到 `/*.trace`、`/*.chlz`、`/*.csv`，
+  防止任何本地抓包（含实时 token）被误提交。

@@ -20,7 +20,14 @@
 ## 1. Huawei CodeArts
 
 - **工程边界**：CodeArts 只有一个 Provider。核心服务是 `codearts2api`（账号池、签名、网关），`codearttray` 是同一工程的 Windows 托盘前端，**不是独立 Provider**，也不单独计入能力矩阵。托盘对 `/api/ui/*` 的调用只作为管理 API 需求参考（见 `RESEARCH.md` §10.17）。
-- **签到门控**：`/v1/ops/claim` + `/v1/ops/confirm` 属权益领取，默认不实现；仅在上游明确允许自动化并经运维确认后才作为默认关闭的可选项。
+- **签到门控**：`/v1/ops/claim` + `/v1/ops/confirm` 属权益领取，只有 `checkin.claim_enabled = true` 的账号才会执行。
+- **签到协议（Live Verified 2026-11-01，`newhuawei.trace`）**：`GET /v1/ops/delivery?channel=WEB`
+  列出全部活动；每日签到是 `type = USER_LOGIN` 的那条（2026-11-01 为 `campaignId=34`，
+  100 积分，`triggerMode: MANUAL_CLAIM`）。随后 `POST /v1/ops/claim`
+  `{"campaignId":"34","idempotentKey":"claim_34_<ms>","channel":"WEB"}` 与
+  `POST /v1/ops/confirm` `{"campaignId":"34"}`。**campaign id 会随活动周期变化**，必须从
+  delivery 读取，不能写死（早期按参考实现硬编码 id 1 + `channel=IDE`，delivery 里根本没有该活动，
+  于是所有账号都报 “activity is not available” 且从未真正领到积分）。
 - **区域**：CN（`cn-north-4`）；国际站（`ap-southeast-1`）存在，但未验证，默认 `unavailable`。
 - **基址**：`https://snap-access.cn-north-4.myhuaweicloud.com`
 - **认证**：STS 临时 AK/SK + `security_token` + `refresh_token` + `client_id` + P-256 DPoP 私钥 + `domain_id`/`uid`。签名 `SDK-HMAC-SHA256`，头 `X-Security-Token`。refresh_token 一次性，刷新后必须原子替换。**刷新必须复用签发 refresh token 的 `client_id`**（登录默认 `codearts-snap`；用错 client 会得到终态 `invalid_grant`，表现为 STS 到期即掉线）。
@@ -41,7 +48,21 @@
 - **模型发现**：`GET /algo/api/v2/model/list?Encode=1`（自定义编码）。
 - **推理**：`POST /algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1`；SSE 为普通 `data:` JSON，可能带内错误。
 - **额度**：`GET /sash/api/v2/me/usage`，读取 `user_quota`/`add_on_quota`（total/remaining/expiresAt）；备选 `/api/v2/quota/usage`。
-- **错误**：`110`/`10605`/`1210`/429→RateLimited；`105`/`TOKEN_EXPIRE`→AuthInvalid；402→QuotaExhausted。
+- **错误**：`110`/`10605`/`1210`/429→RateLimited；`105`/`TOKEN_EXPIRE`→AuthInvalid；402→QuotaExhausted；
+  `[FAIL]node:<model>-node msg:Execution failed` → **ModelUnavailable**（模型专属节点失败，账号本身健康，
+  不进入账号冷却，不影响同一账号的其他模型）。2026-11-01 实测 `qfmodel`（Qwen3.8-Flash，CN 与 Intl）
+  三个请求全部返回该错误，`dfmodel` 同账号仍可用。
+- **签到（CN / Intl 同一套 campaign API）**：`GET /sash/api/v1/me/campaigns` →
+  `POST /sash/api/v1/me/campaigns/{campaignId}/claim`，两者都必须带 `cosy-clienttype: 10`；
+  缺这个头时上游返回 **200 + `showCampaign:false` + 空 `campaigns`**（静默降级，不是“没有活动”）。
+  **活动列表按账号下发**：没有每日签到的账号仍会收到全局订阅促销
+  （`Untitledtest1.trace`，Intl 2026-11-01：`showCampaign:true`、`claimable:false`，
+  `campaigns` 只有一条 `VIEW_DETAILS`/`CLAIMED`），因此“没有签到”表现为**非空列表中没有
+  `CLAIM_BENEFIT`**，判为 Unsupported；空列表仍是降级/异常，可重试。
+  `showCampaign` 是增长页功能开关（缺头即 false），**不是**账号活动标记。
+  只领取 `actionType=CLAIM_BENEFIT && claimStatus=CLAIMABLE`；claim 响应 `replayed:true` 表示重复领取。
+  Intl 抓包（`qoder-intel.trace`，桌面端 0.5.1，2026-11-01）：每日 100 credits，**10:00（UTC+8）刷新**，
+  领取后 30 天有效；桌面端 claim 用空 body，`{}` 同样被接受。
 - **当前状态**：`experimental`。COSY 实现工作量大，需完整签名/编码测试向量后才可发布为可用。
 
 ## 3. ByteDance TRAE（CN / International）
@@ -63,6 +84,11 @@
 - **认证**：`Authorization: Bearer` + `X-User-Id` + `X-Enterprise-Id` + `X-Tenant-Id` + `X-Domain`；UA/`X-Product`/会话头族。凭据包含 access/refresh token、uid、enterpriseId、domain、expiresAt。
 - **模型**：CN `GET /v2/enterprises/{personal|eid}/models`；Intl `GET /v3/config`（仅桌面 UA）。
 - **推理**：`POST /v2/chat/completions`（OpenAI 形状，上游实际偏流式；非流式由网关聚合）。
+  **思考开关**：上游只认扁平 `reasoning_effort` 与 `thinking:{"type":"disabled"}`；两者都不带时由模型默认决定，
+  部分模型会把思维链写进可见 `content`（`WORKBUDDY_MIGRATION.md` §5；参考 `workbuddy2api/upstream_compat.py`）。
+  网关按调用方意图翻译（2026-11-01）：显式档位原样小写透传；`off/none/disabled/false/0`
+  改写成 `thinking.disabled`（上游对 `off` 报 `11150`，`none` 反而开启）；`enable_thinking=true`
+  且无档位时取参考实现的偏好档 `high`；调用方未表态则两个字段都不发。
 - **刷新**：`POST /v2/plugin/auth/token/refresh`（`X-Refresh-Token` + `X-Auth-Refresh-Source: plugin`）。加密来源（`$wbEncrypted`）只读，不回写。reference 语义：refresh token 轮换时先持久化再使用；轮换后写库失败不得当作成功。
 - **设备码授权**：`POST /v2/plugin/auth/state?platform=CLI` → 官方 `authUrl` + `state`；`GET /v2/plugin/auth/token?state=`（`11217` 等待）→ `GET /v2/plugin/login/account?state=`（`12151` 等待）。上游不提供单独的短用户码，界面只展示真实 URL。
 - **额度**：`POST /v2/billing/meter/get-user-resource`；月度包 `CycleCapacity*`、一次性包 `Capacity*`，`*Precise` 优先；单位 credits，**不得**当 token 换算；无有效包保持 `null`。
@@ -72,8 +98,13 @@
   - 账号/授权：`11140`、`11142`、`14015`、`14016`、`14017` → AuthInvalid/AccountDisabled/ChannelRestricted。
   - 额度：`402`、`412`、`14001`、`14012-14014`、`14018`、`14019` → QuotaExhausted。
   - 限流：`6000-6007`、`6020-6022`、`14003` → RateLimited（账号级/队列级）。
-  - 模型级：`6004`/`6008` → 该账号该模型冷却，不是账号失效。
+  - 模型级：`6004`/`6008` → 该账号该模型冷却，不是账号失效；`11102`/`11158` → 模型对当前用户类型
+    不可用（`model [...] is not allowed for user type [personal_free_user]`，无权限/未订阅），
+    归一为 ModelUnavailable，不冷却整账号。
   - 渠道：`11128` → 请求级（渠道/提示词风控，语义未定），不得转成普通 429，也不得自动改写提示词。
+    Intl 实测还有一种来源：首条消息不是 `system` 时同样返回 `11128`
+    （`first message is not system prompt`），并且会**掩盖真实的 11158 权限错误**——
+    排查模型权限时先补 system 再看第二个错误码。
   - M14-A 修正：本节旧文本曾把 `402`、`3004` 列入“会话失效”，并把 `12153` 当作 SessionInvalid。`402`/`412` 实为 credits 用尽（`dsh` 与 Coding2API 一致）；`3004` 仅见于一张编码损坏的错误表，已撤回。
 - **设备令牌**：`X-Device-Token` 由腾讯 Turing Shield SDK 生成。本项目**不实现**该 SDK、不伪造设备指纹；仅在运维显式提供静态头时透传，否则功能可能被上游降级/拒绝，状态保持 `experimental`。
 - **当前状态**：`experimental`。M14-B 已实现原生 Rust 核心（凭据读取、模型发现、非流式/SSE、工具调用、错误归一化、CN/Intl 隔离）；M14-C 补齐刷新生命周期、设备码授权、额度与 CN 签到。全部为 **MockVerified**，**无真实账号、未发真实请求**。协议、架构适配、CN/Intl 矩阵与诚实头探针见 **`docs/WORKBUDDY_MIGRATION.md`**，执行记录见 `PROGRESS.md` §37 与 `docs/MIGRATION_MATRIX.md` §9。
@@ -120,7 +151,7 @@
 
 | Provider | 模型推理 | SSE | Tools | 原生会话恢复 | 额度 | Agent Task | 当前状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CodeArts CN | 已实现（M13-B） | 已实现 | 已实现 | Unsupported（`chat_id` 仅缓存亲和） | 已实现（积分；未知保留） | Unsupported | experimental（无真实账号） |
+| CodeArts CN | 已实现（M13-B；Live Verified） | 已实现 | 已实现 | Unsupported（`chat_id` 仅缓存亲和） | 已实现（积分；未知保留） | Unsupported | experimental（Chat/额度/签到已实测；签到按 `USER_LOGIN` 活动动态取 id） |
 | Qoder CN | 已实现（COSY 签名；Live Verified） | 已实现（信封 SSE；Live Verified） | 已实现（tool_calls；Live Verified） | Unsupported（无 upstream session / 取消接口） | 已实现（积分；Live Verified） | 已实现（campaign；Live Verified 一次领取） | experimental（授权/模型/额度/Chat/SSE/工具/签到均已 Live Verified） |
 | Qoder Intl | 计划 | 计划 | 计划 | 计划 | 已实现（未实测） | Unsupported | unavailable（授权与签到未实测） |
 | TRAE CN | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-E，MockVerified） | Unsupported | experimental（授权/刷新/额度/签到均 MockVerified；无真实账号） |

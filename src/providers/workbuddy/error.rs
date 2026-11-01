@@ -231,6 +231,17 @@ mod tests {
     }
 
     #[test]
+    fn a_model_the_plan_does_not_include_is_model_unavailable() {
+        // Observed on WorkBuddy Intl behind a 11128 first-message check: once a
+        // system prompt is sent, the real reason is entitlement.
+        let error = classify_http_status(
+            403,
+            r#"{"code":11158,"msg":"model [kimi-k3.1-pro-highspeed] is not allowed for user type [personal_free_user]"}"#,
+        );
+        assert_eq!(error.kind, ErrorKind::ModelUnavailable);
+    }
+
+    #[test]
     fn five_hundred_is_upstream_server() {
         assert_eq!(
             classify_http_status(503, "gateway down").kind,

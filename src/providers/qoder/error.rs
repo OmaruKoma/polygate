@@ -166,8 +166,13 @@ pub fn classify_status(status: i64, body: &str) -> GatewayError {
     }
     if status == 400 || status == 404 || status == 422 {
         if contains_any(&lowered, NODE_FAILURE_MARKERS) {
+            // The upstream's per-model execution node failed; the account
+            // itself is healthy. ModelUnavailable keeps the account out of
+            // cooldown, so one broken model (for example the free
+            // `oa_qwen-plus-*` node on 2026-11-01) does not stop the other
+            // models of the same account from serving.
             return with_status(GatewayError::new(
-                ErrorKind::UpstreamServer,
+                ErrorKind::ModelUnavailable,
                 public_message("Qoder model node failed", body),
             ));
         }
@@ -458,7 +463,8 @@ mod tests {
         );
         assert_eq!(
             classify_http_status(400, "[FAIL]node:oa_qwen msg:Execution failed").kind,
-            ErrorKind::UpstreamServer
+            ErrorKind::ModelUnavailable,
+            "a model node failure must not cool down the whole account"
         );
     }
 
@@ -499,14 +505,15 @@ mod tests {
 
     #[test]
     fn envelope_errors_use_the_same_model_level_rules_as_http() {
-        // Model-level transient: the node that serves this model failed.
+        // Model-level failure: the node that serves this model failed. It is
+        // scoped to the model, so it must not cool down the whole account.
         assert_eq!(
             classify_envelope(
                 400,
                 "[FAIL]node:oa_qwen-plus-main msg:Execution failed: null"
             )
             .kind,
-            ErrorKind::UpstreamServer
+            ErrorKind::ModelUnavailable
         );
         // The model itself is gone/unavailable; switching accounts does not help.
         assert_eq!(

@@ -370,6 +370,10 @@ async fn same_day_checkin_is_deduped() {
     assert!(second.replayed);
     assert_eq!(second.status, first.status);
     assert_eq!(second.attempt_count, first.attempt_count);
+    assert_eq!(
+        second.summary, "already checked in today; nothing was claimed again",
+        "a repeat must not replay the first run's gain as if it happened again"
+    );
     assert_eq!(fixture.executor.checkin_calls(), 1);
 
     // A duplicate inside one batch is collapsed before execution too.

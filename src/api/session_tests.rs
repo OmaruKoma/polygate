@@ -110,7 +110,11 @@ where
 
     let sessions =
         SessionBindingService::new(storage, accounts.clone(), policy).expect("session service");
-    let session_router = SessionRouter::new(sessions.clone(), accounts.clone());
+    // Production only keeps bindings for CodeArts; these tests exercise that
+    // sticky lease lifecycle and use Qoder as the streaming stand-in, so pin
+    // the kind explicitly instead of relying on the default list.
+    let session_router = SessionRouter::new(sessions.clone(), accounts.clone())
+        .with_sticky_kinds(vec![ProviderKind::Qoder]);
     let state = ApiState::new(
         registry,
         catalog,

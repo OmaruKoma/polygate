@@ -113,12 +113,9 @@ impl CheckinExecutor for OfficeAceCheckinExecutor {
 
         // One read serves both the "already claimed" check and the before
         // snapshot; `points` is cumulative, so the gain is measured on the
-        // remaining amount.
-        let before_payload = self
-            .http
-            .get_subscription(&credential, now)
-            .await
-            .unwrap_or(serde_json::Value::Null);
+        // remaining amount. A failed read is an unknown outcome: without a
+        // baseline every remaining point would look like today's gain.
+        let before_payload = self.http.get_subscription(&credential, now).await?;
         if let Some(activity) =
             subscription::daily_activity(&before_payload, now).filter(|activity| activity.claimed)
         {
@@ -348,6 +345,46 @@ mod tests {
             .await
             .expect("checkin");
         assert!(matches!(outcome, CheckinOutcome::AlreadyCheckedIn { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_failed_before_read_is_an_error_and_never_claims() {
+        let server = spawn_server(|request| match request.path() {
+            "/v1/subscription" => Reply::json(503, "unavailable"),
+            "/v1/subscription/bonus/claim" => {
+                Reply::json(200, subscription_with(100.0, "2026-10-30T01:00:00Z"))
+            }
+            _ => Reply::json(404, "{}"),
+        })
+        .await;
+        let executor = OfficeAceCheckinExecutor::new(
+            "http://cloud.invalid",
+            "http://cloud.invalid",
+            true,
+            reqwest::Client::new(),
+        );
+        let mut context = context();
+        let mut value = context
+            .credential
+            .take()
+            .expect("credential")
+            .to_json()
+            .clone();
+        value["model_base_url"] = json!(server.base_url);
+        context.credential = Some(Credential::from_value(value));
+
+        let error = executor
+            .checkin(&request(), &context)
+            .await
+            .expect_err("an unknown baseline must not be reported as a gain");
+        assert_eq!(error.kind, ErrorKind::UpstreamServer);
+        assert!(
+            server
+                .requests()
+                .iter()
+                .all(|request| request.path() != "/v1/subscription/bonus/claim"),
+            "no claim without a baseline"
+        );
     }
 
     #[tokio::test]

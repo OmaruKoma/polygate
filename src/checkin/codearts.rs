@@ -1,14 +1,18 @@
 //! CodeArts daily check-in executor (`/v1/ops/*`).
 //!
-//! Evidence: Coding2API `src/provider/codearts/client.py:320-424` and
-//! `events.py:400-501`; the local `codearts2api` has **no** check-in code. The
-//! two reference endpoint families are not interchangeable; this adapter uses
-//! `/v1/ops/delivery` -> `/v1/ops/claim` -> `/v1/ops/confirm` (no `snap-manager`
-//! prefix, `channel=IDE`, campaign id 1).
+//! Evidence: `newhuawei.trace` (Charles, 2026-11-01 09:55, web client) captured
+//! the real flow. `/v1/ops/delivery?channel=WEB` lists the campaigns; the daily
+//! check-in is the `USER_LOGIN` item (campaign id 34 on 2026-11-01, 100
+//! credits, `triggerMode: MANUAL_CLAIM`). The client then posts
+//! `/v1/ops/claim` with `{"campaignId":"34","idempotentKey":"claim_34_<ms>",
+//! "channel":"WEB"}` and `/v1/ops/confirm` with `{"campaignId":"34"}`.
 //!
-//! The protocol is **not verified against a real account** by this project.
-//! Capabilities stay `experimental`. Status semantics observed by Coding2API
-//! (three real accounts, 2026-10):
+//! The earlier Coding2API-derived values (`channel=IDE`, campaign id 1) do not
+//! exist on this account: the delivery payload has no campaign 1, which is why
+//! the executor reported "activity is not available". Campaign ids rotate per
+//! activity period, so the id is read from delivery instead of hardcoded.
+//!
+//! Status semantics observed in the capture and by Coding2API (2026-10):
 //!
 //! * `ELIGIBLE` + `claimable=true` -> claim, then confirm;
 //! * `CLAIMED` -> already claimed but unconfirmed; only confirm;
@@ -31,10 +35,13 @@ use crate::config::ProviderKind;
 use crate::error::GatewayError;
 use crate::providers::codearts::{CodeArtsCredential, CodeArtsHttp};
 
-const DELIVERY_PATH: &str = "/v1/ops/delivery?channel=IDE";
+const DELIVERY_PATH: &str = "/v1/ops/delivery?channel=WEB";
 const CLAIM_PATH: &str = "/v1/ops/claim";
 const CONFIRM_PATH: &str = "/v1/ops/confirm";
-const DAILY_CAMPAIGN_ID: i64 = 1;
+const CLAIM_CHANNEL: &str = "WEB";
+/// The web client tags the daily check-in campaign `USER_LOGIN`. Its numeric id
+/// changes with each activity period, so it is taken from the delivery payload.
+const DAILY_CAMPAIGN_TYPE: &str = "USER_LOGIN";
 
 pub struct CodeArtsCheckinExecutor {
     http: CodeArtsHttp,
@@ -79,21 +86,18 @@ impl CodeArtsCheckinExecutor {
     async fn claim(
         &self,
         authorization: &AuthorizationContext,
+        campaign_id: i64,
     ) -> Result<(i64, String), GatewayError> {
         let credential = Self::credential(authorization)?;
-        let key = format!(
-            "claim_{}_{}",
-            DAILY_CAMPAIGN_ID,
-            Utc::now().timestamp_millis()
-        );
+        let key = format!("claim_{campaign_id}_{}", Utc::now().timestamp_millis());
         let payload = self
             .http
             .post_json(
                 CLAIM_PATH,
                 &json!({
-                    "campaignId": DAILY_CAMPAIGN_ID,
+                    "campaignId": campaign_id.to_string(),
                     "idempotentKey": key,
-                    "channel": "IDE",
+                    "channel": CLAIM_CHANNEL,
                 }),
                 &credential,
                 Utc::now(),
@@ -102,13 +106,17 @@ impl CodeArtsCheckinExecutor {
         Ok((business_code(&payload), business_message(&payload)))
     }
 
-    async fn confirm(&self, authorization: &AuthorizationContext) -> Result<(), GatewayError> {
+    async fn confirm(
+        &self,
+        authorization: &AuthorizationContext,
+        campaign_id: i64,
+    ) -> Result<(), GatewayError> {
         let credential = Self::credential(authorization)?;
         let payload = self
             .http
             .post_json(
                 CONFIRM_PATH,
-                &json!({"campaignId": DAILY_CAMPAIGN_ID}),
+                &json!({"campaignId": campaign_id.to_string()}),
                 &credential,
                 Utc::now(),
             )
@@ -162,18 +170,24 @@ impl CheckinExecutor for CodeArtsCheckinExecutor {
             });
         }
 
+        let Some(campaign_id) = campaign_id(&campaign) else {
+            return Ok(CheckinOutcome::Failed {
+                category: CheckinErrorCategory::Other,
+                summary: "CodeArts campaign has no id".into(),
+            });
+        };
         match status(&campaign).as_deref() {
             Some("CONFIRMED") | Some("CONSUMED") => Ok(CheckinOutcome::AlreadyCheckedIn {
                 summary: "CodeArts reports today as already checked in".into(),
             }),
-            Some("CLAIMED") => match self.confirm(authorization).await {
+            Some("CLAIMED") => match self.confirm(authorization, campaign_id).await {
                 Ok(()) => Ok(CheckinOutcome::Succeeded {
                     summary: "confirmed a previously claimed CodeArts daily check-in".into(),
                 }),
                 Err(error) => Err(error),
             },
             Some("ELIGIBLE") if claimable(&campaign) => {
-                let (code, message) = self.claim(authorization).await?;
+                let (code, message) = self.claim(authorization, campaign_id).await?;
                 if code != 0 {
                     return Ok(CheckinOutcome::Failed {
                         category: CheckinErrorCategory::Other,
@@ -182,7 +196,7 @@ impl CheckinExecutor for CodeArtsCheckinExecutor {
                         )),
                     });
                 }
-                match self.confirm(authorization).await {
+                match self.confirm(authorization, campaign_id).await {
                     Ok(()) => Ok(CheckinOutcome::Succeeded {
                         summary: summary(if message.is_empty() {
                             "CodeArts daily check-in claimed"
@@ -216,7 +230,14 @@ fn daily_campaign(payload: &Value) -> Option<&Value> {
         .get("items")?
         .as_array()?
         .iter()
-        .find(|item| item.get("campaignId").and_then(Value::as_i64) == Some(DAILY_CAMPAIGN_ID))
+        .find(|item| {
+            item.get("type").and_then(Value::as_str) == Some(DAILY_CAMPAIGN_TYPE)
+                && campaign_id(item).is_some()
+        })
+}
+
+fn campaign_id(campaign: &Value) -> Option<i64> {
+    campaign.get("campaignId").and_then(Value::as_i64)
 }
 
 fn status(campaign: &Value) -> Option<String> {
@@ -316,10 +337,13 @@ mod tests {
     fn campaign(status: &str, claimable: bool) -> String {
         json!({
             "data": {"items": [
-                {"campaignId": 3, "title": "推荐码", "status": "CONFIRMED"},
-                {"campaignId": 1, "title": "每日签到", "status": status,
-                 "claimable": claimable, "benefitAmount": 1000,
-                 "extra": {"endTime": "2999-01-01T00:00:00Z"}}
+                {"campaignId": 3, "type": "INVITE_USER", "title": "推荐码", "status": "CONFIRMED"},
+                {"campaignId": 4, "type": "NEW_USER_REGISTER", "title": "新用户注册",
+                 "status": "CLAIMED"},
+                {"campaignId": 34, "type": "USER_LOGIN", "title": "每日签到领100积分",
+                 "status": status, "claimable": claimable, "benefitAmount": 100,
+                 "benefitUnit": "CREDIT",
+                 "extra": {"endTime": "2999-01-01T00:00:00Z", "triggerMode": "MANUAL_CLAIM"}}
             ]}
         })
         .to_string()
@@ -369,10 +393,22 @@ mod tests {
             paths,
             vec!["/v1/ops/delivery", "/v1/ops/claim", "/v1/ops/confirm"]
         );
+        let delivery = &server.requests()[0];
+        assert_eq!(
+            delivery.target, "/v1/ops/delivery?channel=WEB",
+            "the captured web client asks for the WEB channel"
+        );
         let claim = &server.requests()[1];
         let body: Value = serde_json::from_str(&claim.body).expect("claim body");
-        assert_eq!(body["campaignId"], 1);
-        assert_eq!(body["channel"], "IDE");
+        assert_eq!(body["campaignId"], "34");
+        assert_eq!(body["channel"], "WEB");
+        assert!(body["idempotentKey"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("claim_34_"));
+        let confirm: Value =
+            serde_json::from_str(&server.requests()[2].body).expect("confirm body");
+        assert_eq!(confirm["campaignId"], "34");
         assert!(claim
             .header("Authorization")
             .unwrap()
@@ -481,14 +517,24 @@ mod tests {
     }
 
     #[test]
-    fn campaign_selection_uses_id_not_title() {
+    fn campaign_selection_follows_the_login_type_not_a_hardcoded_id() {
         let payload = json!({"data": {"items": [
-            {"campaignId": 3, "title": "推荐码"},
-            {"campaignId": 1, "title": "每日签到", "status": "ELIGIBLE", "claimable": true}
+            {"campaignId": 3, "type": "INVITE_USER", "title": "推荐码"},
+            {"campaignId": 41, "type": "USER_LOGIN", "title": "每日签到",
+             "status": "ELIGIBLE", "claimable": true}
         ]}});
         let campaign = daily_campaign(&payload).expect("campaign");
+        assert_eq!(campaign_id(campaign), Some(41));
         assert_eq!(status(campaign).as_deref(), Some("ELIGIBLE"));
         assert!(claimable(campaign));
+    }
+
+    #[test]
+    fn a_missing_login_campaign_is_reported_as_unavailable() {
+        let payload = json!({"data": {"items": [
+            {"campaignId": 3, "type": "INVITE_USER", "title": "推荐码"}
+        ]}});
+        assert!(daily_campaign(&payload).is_none());
     }
 
     #[test]

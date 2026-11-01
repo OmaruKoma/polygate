@@ -1,37 +1,51 @@
-//! Minimal account routing on top of session bindings.
+//! Account routing on top of session bindings.
 //!
-//! The full scheduler (rotation, weights, quota-aware fairness) is M19. This
-//! layer only does what the CodeArts adapter needs today:
+//! Two routing modes, chosen per provider kind:
 //!
-//! 1. an existing `(client session, provider kind, region)` binding wins;
-//! 2. otherwise the first enabled, dispatchable account with a credential is
-//!    bound — explicitly documented as "no load balancing yet";
-//! 3. one upstream session id is generated per binding and reused verbatim;
-//! 4. the account/session permits are held for the whole request (including the
+//! * **sticky** (CodeArts) — an upstream session id continues a conversation,
+//!   so a binding `(client session, provider kind, region)` is created once and
+//!   every later request for that key reuses the same account and id;
+//! * **stateless** (every other provider) — the upstream has no session id, so
+//!   the scheduler picks an account per request and nothing is persisted. This
+//!   is what spreads traffic across a pool instead of draining one account.
+//!
+//! Common to both:
+//!
+//! 1. the account/session permits are held for the whole request (including the
 //!    lifetime of an SSE stream);
-//! 5. failures are classified and either reset the upstream session (same
-//!    account) or update the account auth status. A busy account never causes a
-//!    silent rebind.
+//! 2. failures are classified and either reset the upstream session (sticky,
+//!    same account) or update the account auth status. A busy account never
+//!    causes a silent rebind.
 
 use std::sync::{Arc, Mutex};
 
 use crate::account_service::AccountService;
 use crate::accounts::Credential;
+use crate::config::ProviderKind;
 use crate::error::{redact_secrets, ErrorKind, GatewayError};
 use crate::providers::ProviderContext;
 use crate::scheduler::Scheduler;
 
 use super::service::{
-    classify_session_failure, SessionBindingService, SessionFailure, SessionKey, SessionLease,
+    classify_session_failure, AccountSlot, SessionBindingService, SessionFailure, SessionKey,
+    SessionLease,
 };
 
 const MAX_REASON_CHARS: usize = 512;
+
+/// Providers whose upstream continues a conversation from a session id. Only
+/// CodeArts sends that id; everything else resends the full history, so
+/// pinning an account for the binding TTL only drains one account.
+fn default_sticky_kinds() -> Vec<ProviderKind> {
+    vec![ProviderKind::Codearts]
+}
 
 #[derive(Clone)]
 pub struct SessionRouter {
     sessions: SessionBindingService,
     accounts: AccountService,
     scheduler: Arc<Scheduler>,
+    sticky_kinds: Vec<ProviderKind>,
 }
 
 impl SessionRouter {
@@ -51,7 +65,19 @@ impl SessionRouter {
             sessions,
             accounts,
             scheduler,
+            sticky_kinds: default_sticky_kinds(),
         }
+    }
+
+    /// Override which provider kinds keep a session binding. Every other kind
+    /// is routed per request by the scheduler.
+    pub fn with_sticky_kinds(mut self, kinds: Vec<ProviderKind>) -> Self {
+        self.sticky_kinds = kinds;
+        self
+    }
+
+    fn is_sticky(&self, kind: ProviderKind) -> bool {
+        self.sticky_kinds.contains(&kind)
     }
 
     pub fn sessions(&self) -> &SessionBindingService {
@@ -79,6 +105,9 @@ impl SessionRouter {
         excluded: &[String],
     ) -> Result<RouteLease, GatewayError> {
         key_validate(&key)?;
+        if !self.is_sticky(key.kind) {
+            return self.open_stateless(key, excluded).await;
+        }
 
         let mut binding = self.sessions.get(&key).await?;
         if let Some(session) = &binding {
@@ -140,11 +169,44 @@ impl SessionRouter {
         self.scheduler.acquired(&account_id);
         Ok(RouteLease {
             key,
-            lease,
+            held: HeldLease::Binding(Box::new(lease)),
             account_id,
             credential,
             credential_revision: authorization.credential_revision,
             upstream_session_id: upstream.unwrap_or_default(),
+            failure: Mutex::new(None),
+        })
+    }
+
+    /// Stateless route: the scheduler picks an account for this request and no
+    /// binding row is read or written. `excluded` carries failover progress
+    /// within one client request.
+    async fn open_stateless(
+        &self,
+        key: SessionKey,
+        excluded: &[String],
+    ) -> Result<RouteLease, GatewayError> {
+        let account = self.select_account(&key, excluded).await?;
+        let slot = self.sessions.acquire_slot(&key, &account).await?;
+        let account_id = account.id.clone();
+        let authorization = self
+            .accounts
+            .authorization_context_for(&account_id, key.kind, key.region)
+            .await?;
+        let credential = authorization.credential.ok_or_else(|| {
+            GatewayError::new(
+                ErrorKind::AuthInvalid,
+                format!("account {account_id} has no stored credential"),
+            )
+        })?;
+        self.scheduler.acquired(&account_id);
+        Ok(RouteLease {
+            key,
+            held: HeldLease::Slot(slot),
+            account_id,
+            credential,
+            credential_revision: authorization.credential_revision,
+            upstream_session_id: String::new(),
             failure: Mutex::new(None),
         })
     }
@@ -159,6 +221,13 @@ impl SessionRouter {
         }
         match classify_session_failure(error) {
             SessionFailure::UpstreamSessionInvalid => {
+                if !matches!(&lease.held, HeldLease::Binding(_)) {
+                    tracing::debug!(
+                        account = %lease.account_id,
+                        "ignoring an upstream-session error on a stateless route"
+                    );
+                    return;
+                }
                 let reason = sanitize(&error.message);
                 if let Err(recovery) = self.sessions.reset_upstream(&lease.key, &reason).await {
                     tracing::warn!(
@@ -185,15 +254,20 @@ impl SessionRouter {
         }
     }
 
-    /// Persist the request count/TTL and release the permits.
+    /// Persist the request count/TTL (sticky) and release the permits.
     pub async fn finish(&self, lease: RouteLease) {
         let failure = lease.failure.lock().ok().and_then(|slot| *slot);
         self.scheduler.release(&lease.account_id, failure);
-        if let Err(error) = lease.lease.finish().await {
-            tracing::warn!(
-                error = %error.message,
-                "could not finish the session lease"
-            );
+        match lease.held {
+            HeldLease::Binding(binding) => {
+                if let Err(error) = binding.finish().await {
+                    tracing::warn!(
+                        error = %error.message,
+                        "could not finish the session lease"
+                    );
+                }
+            }
+            HeldLease::Slot(_slot) => {}
         }
     }
 
@@ -210,10 +284,18 @@ impl SessionRouter {
     }
 }
 
-/// One account + credential + upstream session, with permits held.
+/// What keeps the permits alive until [`SessionRouter::finish`].
+enum HeldLease {
+    /// Sticky route: a persisted binding owns the account and upstream id.
+    Binding(Box<SessionLease>),
+    /// Stateless route: account permits only, nothing persisted.
+    Slot(AccountSlot),
+}
+
+/// One account + credential, with permits held.
 pub struct RouteLease {
     key: SessionKey,
-    lease: SessionLease,
+    held: HeldLease,
     account_id: String,
     credential: Credential,
     credential_revision: Option<i64>,
@@ -256,7 +338,8 @@ impl RouteLease {
             account_id: Some(self.account_id.clone()),
             credential_revision: self.credential_revision,
             client_session_id: Some(self.key.client_session_id.clone()),
-            upstream_session_id: Some(self.upstream_session_id.clone()),
+            upstream_session_id: (!self.upstream_session_id.is_empty())
+                .then(|| self.upstream_session_id.clone()),
         }
     }
 }

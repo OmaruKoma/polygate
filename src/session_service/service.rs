@@ -25,7 +25,7 @@ use std::time::Duration;
 use chrono::Utc;
 
 use crate::account_service::AccountService;
-use crate::accounts::AuthStatus;
+use crate::accounts::{Account, AuthStatus};
 use crate::config::{ProviderKind, Region};
 use crate::error::{redact_secrets, ErrorKind, GatewayError};
 use crate::sessions::{Session, SessionState};
@@ -175,6 +175,30 @@ impl SessionLease {
             .sessions()
             .get(&self.key.client_session_id, self.key.kind, self.key.region)
             .await
+    }
+}
+
+/// Permits held for one request that is not tied to a persisted binding.
+///
+/// See [`SessionBindingService::acquire_slot`]. Dropping it releases the
+/// per-session gate and the account slot, exactly like [`SessionLease`].
+pub struct AccountSlot {
+    account_id: String,
+    _session_guard: Option<SessionGateGuard>,
+    _account_lease: AccountLease,
+}
+
+impl AccountSlot {
+    pub fn account_id(&self) -> &str {
+        &self.account_id
+    }
+}
+
+impl std::fmt::Debug for AccountSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountSlot")
+            .field("account_id", &self.account_id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -344,6 +368,53 @@ impl SessionBindingService {
             key: key.clone(),
             session,
             ttl: self.ttl,
+            _session_guard: session_guard,
+            _account_lease: account_lease,
+        })
+    }
+
+    /// Acquire the account and session permits for one explicit account
+    /// without reading or creating a binding.
+    ///
+    /// Stateless providers (everything that does not consume an upstream
+    /// session id) use this so the scheduler can pick a different account per
+    /// request instead of pinning a whole conversation to one account for the
+    /// binding TTL.
+    pub async fn acquire_slot(
+        &self,
+        key: &SessionKey,
+        account: &Account,
+    ) -> Result<AccountSlot, GatewayError> {
+        key.validate()?;
+        if account.kind != key.kind || account.region != key.region {
+            return Err(binding_error(
+                "the selected account does not match the session provider/region",
+            ));
+        }
+        if !account.enabled {
+            return Err(GatewayError::new(
+                ErrorKind::AccountDisabled,
+                format!("account {} is disabled", account.id),
+            ));
+        }
+        if let Some(error) = auth_error(account.auth_status, &account.id) {
+            return Err(error);
+        }
+
+        let deadline = tokio::time::Instant::now() + self.policy.queue_timeout;
+        let session_guard = if self.policy.serialize_session {
+            Some(self.gate.acquire(&key.gate_key(), deadline).await?)
+        } else {
+            None
+        };
+        let operator_limit = usize::try_from(account.max_concurrency).unwrap_or(1);
+        let account_lease = self
+            .limiter
+            .acquire(&account.id, operator_limit, deadline)
+            .await?;
+
+        Ok(AccountSlot {
+            account_id: account.id.clone(),
             _session_guard: session_guard,
             _account_lease: account_lease,
         })

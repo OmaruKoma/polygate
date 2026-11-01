@@ -10,6 +10,6 @@ web/dist
 .local
 
 # Local packet captures contain live tokens; never commit them.
-/Untitled*.trace
-/Untitled*.chlz
-/Untitled*.csv
+/*.trace
+/*.chlz
+/*.csv

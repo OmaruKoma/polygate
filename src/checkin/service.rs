@@ -378,7 +378,7 @@ impl CheckinService {
             RunClaim::Existing(record) if record.status == CheckinStatus::Unknown => {
                 self.reconcile_unknown(account, record, timezone).await
             }
-            RunClaim::Existing(record) => Ok(record.to_result(true)),
+            RunClaim::Existing(record) => Ok(replay_result(record)),
             RunClaim::Interrupted(record) => {
                 self.resolve_interrupted(account, record, timezone).await
             }
@@ -744,6 +744,20 @@ fn error_result(account_id: &str, business_date: NaiveDate, error: &GatewayError
         summary: sanitize_summary(&error.message, None),
         quota_refresh: None,
     }
+}
+
+/// A repeat call for a day that already reached a terminal state reports that
+/// day's stored outcome. A stored success must not read like a fresh grant: the
+/// points in its summary were earned by the first run, not by this click.
+fn replay_result(record: CheckinRecord) -> CheckinResult {
+    let summary = if record.status == CheckinStatus::Succeeded {
+        "already checked in today; nothing was claimed again".to_string()
+    } else {
+        record.summary.clone()
+    };
+    let mut result = record.to_result(true);
+    result.summary = summary;
+    result
 }
 
 /// Redact key/value secrets, scrub any credential value echoed back by the

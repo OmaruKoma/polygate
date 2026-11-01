@@ -19,6 +19,6 @@ mod tests;
 pub use limits::{AccountLease, AccountLimiter, LimitPolicy, SessionGate, SessionGateGuard};
 pub use router::{RouteLease, SessionRouter};
 pub use service::{
-    classify_session_failure, BindOutcome, SessionBindingService, SessionFailure, SessionKey,
-    SessionLease, SessionRecovery,
+    classify_session_failure, AccountSlot, BindOutcome, SessionBindingService, SessionFailure,
+    SessionKey, SessionLease, SessionRecovery,
 };

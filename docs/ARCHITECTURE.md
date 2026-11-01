@@ -180,10 +180,13 @@ SessionBindingService
 - 账号级在途上限、启动窗口和会话串行化都在 `session_service/limits.rs`；等待有统一超时，超时返回 `NoCapacity`，不做无界重试。
 - CodeArts 的保守默认是 3 在途、3 次启动/60s、75s 队列超时；来源与证据等级见 `docs/CODEARTS_SESSION.md`。
 - 绑定持久化在 `sessions` 表（迁移 0004 增加 `binding_revision` / `invalid_reason`）；并发租约是进程内状态，多实例需等后续 Scheduler 阶段改为数据库租约。
-- **M13-B `SessionRouter`**：Chat 请求先用绑定查找账号；不存在时选第一个可用账号并创建绑定，
+- **M13-B `SessionRouter`**：Chat 请求先用绑定查找账号；不存在时由 `Scheduler` 选出账号并创建绑定，
   读取凭据后返回 `RouteLease`（会话锁 + 账号槽 + 上游会话 ID）。API 层持有租约直到 SSE 结束或
   连接断开；错误按 `classify_session_failure` 触发 `reset_upstream` 或写入账号认证状态。
-  完整公平选号/权重/冷却留给 M19。
+- **M15-G 粘性按 Provider 区分**：只有真正消费上游会话 ID 的 Provider（CodeArts）保留会话绑定；
+  其余 Provider 的上游都无状态（每次重发完整历史），改为每请求由调度器选号、不落 `sessions` 行，
+  否则首条用户消息哈希会让整段对话在 24h 内钉死在一个账号上，号池无法均摊。
+  `SessionRouter::with_sticky_kinds` 可覆盖该列表。
 - **M13-D2-E 租约语义（已测试，`PROGRESS.md` §33）**：SSE body 被客户端丢弃时租约随 stream
   一起 drop，立即释放会话锁与账号槽（不调用 `finish()`，不计 usage/不延长 TTL）；正常结束、
   空闲超时、流内额度错误都走 `report_failure` + `finish()`；同一会话的请求由 per-session 锁

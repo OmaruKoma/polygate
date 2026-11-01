@@ -5,8 +5,8 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/version-0.2.1-5bc4b5" alt="Version">
-  <img src="https://img.shields.io/badge/tests-760%20passing-59bd91" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.2.2-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/tests-773%20passing-59bd91" alt="Tests">
   <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
 </p>
 
@@ -78,7 +78,8 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 - 三种策略：轮询、平滑加权轮询、最少连接
 - 额度感知：只排除**已知**耗尽账号，未知额度保持 `unknown`，不臆测成 0 或无限
 - 失败冷却、并发许可、健康度轮换；403/429 单独处理，客户端错误不冷却账号
-- 会话粘性（`x-session-id` / 首条用户消息哈希），租约结束自动归还槽位
+- 会话粘性只给真正续接上游会话的 Provider（CodeArts）；其余 Provider 每请求轮转账号，
+  同一段多轮对话也能均摊到号池，租约结束自动归还槽位
 - 只在可见输出之前故障切换；流式中途失败以 in-stream error 帧结束，绝不静默重放
 
 **模型注册表**

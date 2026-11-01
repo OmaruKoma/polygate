@@ -15,9 +15,29 @@
 //!   same natural person claimed from another account. Any other `BLOCKED` is a
 //!   real failure.
 //! * `replayed: true` in the claim response is an idempotent replay.
+//! * The campaign list is delivered per account. An account without the daily
+//!   check-in keeps the global `VIEW_DETAILS` promo, so "no check-in" shows up
+//!   as a non-empty list without any `CLAIM_BENEFIT` entry, not as an empty
+//!   list (capture `Untitledtest1.trace`, Intl, 2026-11-01).
+//! * `showCampaign` is a growth-page feature flag for the request (it turns
+//!   false when `cosy-clienttype` is missing), **not** an activity flag: the
+//!   account above still reports `showCampaign: true`. An empty list with the
+//!   flag on is therefore an upstream degradation, not a settled outcome.
 //! * 404/405/410 on the campaign API means "this region has no campaign
 //!   endpoint". That is reported as `Unsupported` (settled, never retried), not
 //!   as a failure.
+//! * `showCampaign` separates a genuine empty list (the account is not targeted,
+//!   `false`) from the upstream's silent degradation (`true` with `campaigns:
+//!   []`), which is reported as a retryable upstream failure instead of a
+//!   settled "unsupported".
+//!
+//! Intl capture (`qoder-intel.trace`, desktop 0.5.1, 2026-11-01 11:38 +08): the
+//! same `/sash/api/v1/me/campaigns` API on `openapi.qoder.sh`; the daily
+//! campaign is `CLAIM_BENEFIT` + 100 credits, resets at 10:00 UTC+8 and stays
+//! valid 30 days after claiming. `cosy-clienttype: 10` is still mandatory —
+//! without it the upstream answers 200 with `showCampaign: false` and an empty
+//! list. The claim POST carries no body in the desktop client; `{}` is accepted
+//! as well (verified 2026-11-01, answered `replayed: true`).
 //!
 //! Claim safety: reward claims change account state. They only run when
 //! `claim_enabled` is set for the provider; otherwise a run reports a definitive
@@ -151,6 +171,23 @@ fn has_campaigns(payload: &Value) -> bool {
     items(payload).any(|_| true)
 }
 
+/// Whether the list carries a daily check-in entry at all (claimable, claimed
+/// or otherwise). A targeted account always has one; an account the campaign
+/// is not delivered to keeps only the global `VIEW_DETAILS` promo.
+fn has_daily_campaign(payload: &Value) -> bool {
+    items(payload).any(|item| text(item, "actionType") == ACTION_CLAIM_BENEFIT)
+}
+
+/// The upstream sets this to `true` when the account is targeted by any
+/// campaign. When it is `false` the empty list is genuine; when it is `true` an
+/// empty list means the response was degraded, not that the account is done.
+fn show_campaign(payload: &Value) -> bool {
+    payload
+        .get("showCampaign")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn already_claimed(payload: &Value) -> bool {
     items(payload)
         .filter(|item| text(item, "actionType") == ACTION_CLAIM_BENEFIT)
@@ -195,12 +232,25 @@ impl CheckinExecutor for QoderCheckinExecutor {
         let credential = Self::credential(authorization)?;
         let payload = self.campaigns(&credential).await?;
         if !has_campaigns(&payload) {
+            if show_campaign(&payload) {
+                // `showCampaign=true` with an empty list is the upstream's
+                // silent degradation (for example a dropped `cosy-clienttype`),
+                // not a settled "nothing to claim".
+                return Ok(CheckinProbe::Unknown);
+            }
             return Err(GatewayError::unsupported(
                 "Qoder reports no daily check-in campaign for this account",
             ));
         }
-        if already_claimed(&payload) && claimable_campaigns(&payload).is_empty() {
+        if !claimable_campaigns(&payload).is_empty() {
+            return Ok(CheckinProbe::Unknown);
+        }
+        if already_claimed(&payload) {
             return Ok(CheckinProbe::confirmed(CheckinStatus::AlreadyCheckedIn));
+        }
+        if !has_daily_campaign(&payload) {
+            // The account is served campaigns but not the daily check-in.
+            return Ok(CheckinProbe::confirmed(CheckinStatus::Unsupported));
         }
         Ok(CheckinProbe::Unknown)
     }
@@ -213,7 +263,17 @@ impl CheckinExecutor for QoderCheckinExecutor {
         let credential = Self::credential(authorization)?;
         let payload = self.campaigns(&credential).await?;
         if !has_campaigns(&payload) {
-            return Ok(CheckinOutcome::Unsupported);
+            if show_campaign(&payload) {
+                return Ok(CheckinOutcome::Failed {
+                    category: CheckinErrorCategory::Upstream,
+                    summary: "Qoder listed no campaigns although the campaign page is enabled; \
+                              the response was degraded upstream, retry later"
+                        .into(),
+                });
+            }
+            return Err(GatewayError::unsupported(
+                "Qoder exposed no campaign page for this account (showCampaign is false)",
+            ));
         }
         let claimable = claimable_campaigns(&payload);
         if claimable.is_empty() {
@@ -222,7 +282,16 @@ impl CheckinExecutor for QoderCheckinExecutor {
                     summary: "Qoder reports today as already checked in".into(),
                 });
             }
-            return Ok(CheckinOutcome::Unsupported);
+            if !has_daily_campaign(&payload) {
+                return Err(GatewayError::unsupported(
+                    "Qoder did not target this account with a daily check-in campaign",
+                ));
+            }
+            return Ok(CheckinOutcome::Unknown {
+                summary: "Qoder lists a daily check-in campaign in an unrecognized state; \
+                          retry later"
+                    .into(),
+            });
         }
         if !self.claim_enabled {
             return Ok(CheckinOutcome::Failed {
@@ -463,12 +532,156 @@ mod tests {
             reqwest::Client::new(),
             &server.base_url,
         );
+        let error = executor
+            .checkin(&request(), &context(Region::Cn))
+            .await
+            .expect_err("unsupported");
+        assert_eq!(error.kind, ErrorKind::Unsupported);
+        assert!(
+            error.message.contains("did not target"),
+            "{}",
+            error.message
+        );
+        assert_eq!(server.request_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_account_without_the_daily_campaign_is_settled_unsupported() {
+        // Shape of `Untitledtest1.trace` (Intl, 2026-11-01): the account gets
+        // only the global subscription promo, yet the growth page is on.
+        let server = spawn_server(|_| {
+            Reply::json(
+                200,
+                json!({"uid": "01a18cd3-c3da-726e-8ce2-7766be8e3dba",
+                       "showCampaign": true, "claimable": false,
+                       "campaignUrl": "https://openapi.qoder.sh/growth-page/activity-iframe",
+                       "campaigns": [{
+                           "campaignId": "01a159af-8a04-76b8-b0f4-59d8e2b60583",
+                           "campaignKey": "act-20261020-944",
+                           "actionType": "VIEW_DETAILS", "claimStatus": "CLAIMED"}]})
+                .to_string(),
+            )
+        })
+        .await;
+        let executor = QoderCheckinExecutor::with_base(
+            Region::Intl,
+            true,
+            reqwest::Client::new(),
+            &server.base_url,
+        );
+        let error = executor
+            .checkin(&request(), &context(Region::Intl))
+            .await
+            .expect_err("not targeted");
+        assert_eq!(error.kind, ErrorKind::Unsupported);
+        assert!(
+            error.message.contains("did not target"),
+            "{}",
+            error.message
+        );
+
+        let probe = executor
+            .check_status(&request(), &context(Region::Intl))
+            .await
+            .expect("probe");
+        assert_eq!(probe, CheckinProbe::confirmed(CheckinStatus::Unsupported));
+        assert!(server
+            .requests()
+            .iter()
+            .all(|request| request.method == "GET"));
+    }
+
+    #[tokio::test]
+    async fn a_daily_campaign_in_an_unknown_state_is_not_claimed() {
+        let server = spawn_server(|request| match request.path() {
+            "/sash/api/v1/me/campaigns" => Reply::json(
+                200,
+                json!({"showCampaign": true, "campaigns": [
+                    {"campaignId": "c-2", "actionType": "CLAIM_BENEFIT", "claimStatus": "BLOCKED"}
+                ]})
+                .to_string(),
+            ),
+            _ => Reply::json(404, "{}"),
+        })
+        .await;
+        let executor = QoderCheckinExecutor::with_base(
+            Region::Cn,
+            true,
+            reqwest::Client::new(),
+            &server.base_url,
+        );
         let outcome = executor
             .checkin(&request(), &context(Region::Cn))
             .await
             .unwrap();
-        assert!(matches!(outcome, CheckinOutcome::Unsupported));
-        assert_eq!(server.request_count(), 1);
+        assert!(
+            matches!(outcome, CheckinOutcome::Unknown { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(server.request_count(), 1, "no claim on an unknown state");
+    }
+
+    #[tokio::test]
+    async fn an_empty_list_with_the_campaign_page_enabled_is_a_retryable_failure() {
+        let server = spawn_server(|_| {
+            Reply::json(
+                200,
+                json!({"uid": "u", "showCampaign": true, "claimable": true,
+                       "campaignUrl": "https://openapi.qoder.sh/growth-page/activity-iframe",
+                       "campaigns": []})
+                .to_string(),
+            )
+        })
+        .await;
+        let executor = QoderCheckinExecutor::with_base(
+            Region::Intl,
+            true,
+            reqwest::Client::new(),
+            &server.base_url,
+        );
+        let outcome = executor
+            .checkin(&request(), &context(Region::Intl))
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            CheckinOutcome::Failed {
+                category: CheckinErrorCategory::Upstream,
+                ..
+            }
+        ));
+        assert_eq!(server.request_count(), 1, "no claim on a degraded list");
+
+        let probe = executor
+            .check_status(&request(), &context(Region::Intl))
+            .await
+            .expect("probe");
+        assert_eq!(probe, CheckinProbe::Unknown);
+    }
+
+    #[tokio::test]
+    async fn an_empty_list_without_targeting_is_unsupported() {
+        let server = spawn_server(|_| {
+            Reply::json(
+                200,
+                json!({"uid": "u", "showCampaign": false, "claimable": false,
+                       "campaignUrl": "", "campaigns": []})
+                .to_string(),
+            )
+        })
+        .await;
+        let executor = QoderCheckinExecutor::with_base(
+            Region::Intl,
+            true,
+            reqwest::Client::new(),
+            &server.base_url,
+        );
+        let error = executor
+            .checkin(&request(), &context(Region::Intl))
+            .await
+            .expect_err("unsupported");
+        assert_eq!(error.kind, ErrorKind::Unsupported);
+        assert!(error.message.contains("showCampaign"), "{}", error.message);
     }
 
     #[tokio::test]

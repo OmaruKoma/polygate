@@ -1106,6 +1106,80 @@ async fn sticky_binding_wins_over_rotation() {
 }
 
 #[tokio::test]
+async fn stateless_kinds_rotate_every_request_and_persist_nothing() {
+    let fixture = Fixture::memory().await;
+    let alpha = fixture
+        .account_in(ProviderKind::Officeace, Region::Cn, "alpha")
+        .await;
+    let beta = fixture
+        .account_in(ProviderKind::Officeace, Region::Cn, "beta")
+        .await;
+    let router = scheduled_router(&fixture, round_robin());
+    let stateless = SessionKey::new("office-1", ProviderKind::Officeace, Region::Cn);
+
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        let lease = router.open(stateless.clone()).await.expect("open");
+        assert!(
+            lease.upstream_session_id().is_empty(),
+            "a stateless route has no upstream session id"
+        );
+        seen.push(lease.account_id().to_string());
+        router.finish(lease).await;
+    }
+    assert_eq!(
+        seen.iter().filter(|id| **id == alpha.id).count(),
+        2,
+        "the scheduler rotates the same client session across accounts"
+    );
+    assert_eq!(seen.iter().filter(|id| **id == beta.id).count(), 2);
+    assert!(
+        fixture
+            .service
+            .get(&stateless)
+            .await
+            .expect("get")
+            .is_none(),
+        "stateless routing must not create binding rows"
+    );
+}
+
+#[tokio::test]
+async fn stateless_routes_skip_excluded_accounts_and_blame_auth_failures() {
+    let fixture = Fixture::memory().await;
+    fixture
+        .account_in(ProviderKind::Officeace, Region::Cn, "alpha")
+        .await;
+    fixture
+        .account_in(ProviderKind::Officeace, Region::Cn, "beta")
+        .await;
+    let router = router(&fixture);
+    let stateless = SessionKey::new("office-auth", ProviderKind::Officeace, Region::Cn);
+
+    let lease = router.open(stateless.clone()).await.expect("open");
+    let failing = lease.account_id().to_string();
+    let error = GatewayError::new(ErrorKind::AuthInvalid, "token revoked");
+    router.report_failure(&lease, &error).await;
+    router.finish(lease).await;
+
+    let account = fixture
+        .accounts
+        .get(&failing)
+        .await
+        .expect("get")
+        .expect("account");
+    assert_eq!(account.auth_status, AuthStatus::Invalid);
+
+    let next = router.open(stateless).await.expect("reopen");
+    assert_ne!(
+        next.account_id(),
+        failing,
+        "a rejected stateless account is not selected again"
+    );
+    router.finish(next).await;
+}
+
+#[tokio::test]
 async fn open_excluding_rebinds_and_never_reuses_the_upstream_id() {
     let fixture = Fixture::memory().await;
     let alpha = fixture.account("alpha").await;

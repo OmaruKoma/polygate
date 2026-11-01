@@ -4,9 +4,19 @@
 //! OpenAI-shaped body and always streams; `stream` is therefore forced to
 //! `true` and the adapter aggregates when the caller asked for one response.
 //!
+//! Thinking control: the upstream only reads the flat `reasoning_effort` and
+//! `thinking: {"type":"disabled"}`. When neither is sent the model applies its
+//! own default and some models write the chain of thought into the visible
+//! `content` instead of `reasoning_content` (`WORKBUDDY_MIGRATION.md` §5;
+//! reference `workbuddy2api/upstream_compat.py` `apply_thinking_intent`). The
+//! caller's intent is therefore translated, never invented:
+//! * an effort (or "off") from the caller is forwarded in the upstream shape;
+//! * `thinking: disabled` becomes the only recognised off switch;
+//! * a request that enables thinking without an effort asks for the reference's
+//!   preferred tier (`high`);
+//! * a silent caller gets neither field, so its behaviour is unchanged.
+//!
 //! Deliberate omissions (see the migration document):
-//! * no `reasoning_effort` / `enable_thinking` defaults — the reference adds
-//!   them as official-CLI fingerprints, which this adapter does not imitate;
 //! * no system-prompt folding, no channel-marker rewriting, no desensitisation;
 //! * assistant `reasoning_content` is not round-tripped: the field is observed
 //!   on the response side only, and sending it would be an invented input field.
@@ -52,7 +62,41 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, GatewayError> {
     if !request.stop.is_empty() {
         body.insert("stop".into(), json!(request.stop));
     }
+    apply_thinking(&mut body, request);
     Ok(Value::Object(body))
+}
+
+/// Spellings a caller may use to mean "do not think". The upstream rejects
+/// `reasoning_effort: "off"` with `11150` and treats `"none"` as *enable*, so
+/// the only safe translation is `thinking.disabled`.
+const THINKING_OFF_SPELLINGS: [&str; 5] = ["off", "none", "disabled", "false", "0"];
+
+fn apply_thinking(body: &mut Map<String, Value>, request: &ChatRequest) {
+    let effort = request
+        .reasoning_effort
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    if let Some(effort) = effort {
+        if THINKING_OFF_SPELLINGS.contains(&effort.as_str()) {
+            body.insert("thinking".into(), json!({ "type": "disabled" }));
+        } else {
+            body.insert("reasoning_effort".into(), json!(effort));
+        }
+        return;
+    }
+    match request.enable_thinking {
+        Some(false) => {
+            body.insert("thinking".into(), json!({ "type": "disabled" }));
+        }
+        // The caller enabled reasoning without naming a tier. The reference
+        // picks its preferred tier (`high`) in this case; the upstream rejects
+        // a tier the model does not support, so this is the narrowest guess.
+        Some(true) => {
+            body.insert("reasoning_effort".into(), json!("high"));
+        }
+        None => {}
+    }
 }
 
 fn messages_to_upstream(messages: &[ChatMessage]) -> Result<Vec<Value>, GatewayError> {
@@ -369,5 +413,46 @@ mod tests {
         let body = build_body(&request).unwrap();
         assert_eq!(body["tools"][0]["function"]["name"], "lookup");
         assert_eq!(body["tool_choice"], "required");
+    }
+
+    #[test]
+    fn caller_effort_is_forwarded_flat_and_lowercased() {
+        let mut request = ChatRequest::new("m", vec![]);
+        request.reasoning_effort = Some(" High ".into());
+        let body = build_body(&request).unwrap();
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn disabling_thinking_uses_the_only_off_switch() {
+        for effort in ["off", "none", "disabled", "false", "0"] {
+            let mut request = ChatRequest::new("m", vec![]);
+            request.reasoning_effort = Some(effort.into());
+            let body = build_body(&request).unwrap();
+            assert!(body.get("reasoning_effort").is_none(), "{effort}");
+            assert_eq!(body["thinking"]["type"], "disabled", "{effort}");
+        }
+        let mut request = ChatRequest::new("m", vec![]);
+        request.enable_thinking = Some(false);
+        let body = build_body(&request).unwrap();
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn enabling_thinking_without_an_effort_picks_the_reference_tier() {
+        let mut request = ChatRequest::new("m", vec![]);
+        request.enable_thinking = Some(true);
+        let body = build_body(&request).unwrap();
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn a_silent_caller_still_sends_no_thinking_fields() {
+        let body = build_body(&ChatRequest::new("m", vec![])).unwrap();
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("thinking").is_none());
     }
 }
