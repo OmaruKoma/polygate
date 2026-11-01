@@ -1420,7 +1420,7 @@
     if (quota.status === "unknown" || quota.remaining === null || quota.remaining === undefined) {
       return '<span class="badge muted">未知</span>';
     }
-    const unit = { credits: "积分", tokens: "tokens", requests: "次" }[quota.unit] || "未知单位";
+    const unit = { credits: "积分", beans: "算力豆", tokens: "tokens", requests: "次" }[quota.unit] || "未知单位";
     const total = quota.total !== null && quota.total !== undefined ? ` / ${quota.total}` : "";
     return `<span class="strong">${esc(quota.remaining)}${total}</span> <span class="tiny">${esc(unit)}</span>`;
   }

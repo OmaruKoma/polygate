@@ -5794,3 +5794,15 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   （aarch64/x86_64 × musl/gnu）。
 - 路由器上尚未导入算力豆账号：需要在管理台 Suanlidou 页粘贴 Qoder 访问令牌
   （或新的 `sso_agent_…` 链接令牌），本机实况导入已验证端点可用。
+
+## 83. v0.2.6：算力豆单位显示 + 令牌脚本（2026-11-01）
+
+- 管理台额度列原来只认 `credits`/`tokens`/`requests`，`beans` 落到“未知单位”；
+  [web/app.js](file:///D:/codespace/POOL/web/app.js) 增加 `beans → 算力豆`。
+  现显示为 `942.9699 / 950 算力豆`。
+- 新增 [tools/qoder-token.py](file:///D:/codespace/POOL/tools/qoder-token.py)：
+  只读解密 Qoder CN 桌面端 `auth.v1.dat`（DPAPI 解 `os_crypt` 密钥 + AES-256-GCM v10），
+  令牌直接进剪贴板，只打印账号、长度与过期时间；同时上传为 release 附件。
+- 模型管理页没有 `suanlidou` 分组是**预期行为**：该 Provider 只声明 `quota`，
+  `model_discovery = false`，没有可发现的模型 ID，重启也不会出现分组。
+- 783 passed，fmt/clippy 通过；0.2.6 四产物发布并部署到路由器。

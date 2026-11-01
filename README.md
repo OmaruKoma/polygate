@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/version-0.2.5-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.6-5bc4b5" alt="Version">
   <img src="https://img.shields.io/badge/tests-783%20passing-59bd91" alt="Tests">
   <img src="https://img.shields.io/badge/providers-10-5bc4b5" alt="Providers">
 </p>

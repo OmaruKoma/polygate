@@ -500,6 +500,9 @@ Coding2API 的适配行为：
     （抓包令牌当天即失效）。
   - `access_token`（Qoder CN 访问令牌，`dt-…`，约 30 天）：每次查询先换新链接，
     推荐用这个；Provider 会自己从 `/api/v2/quota/usage?outerProviders=cmcc` 取。
+  - 本地取令牌：`python tools/qoder-token.py`（读取 Qoder 桌面端加密登录态，
+    DPAPI 解 `os_crypt` 密钥 + AES-256-GCM，只读；只输出长度与过期时间，
+    令牌直接进剪贴板）。
 - **管理台**：`POST /admin/api/auth/suanlidou/session`，body `{"session","name"}`。
   值以 `sso_agent_` 开头按 `sso_token` 存，否则按 `access_token` 存；
   先调 `quota()` 校验，成功才经 `CredentialService` 落库；返回
