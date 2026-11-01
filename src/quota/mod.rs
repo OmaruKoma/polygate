@@ -21,6 +21,8 @@ pub enum QuotaUnit {
     Credits,
     Requests,
     Tokens,
+    /// China Mobile 算力豆 (order-center beans, 10 000 raw units each).
+    Beans,
     Unknown,
 }
 
@@ -30,6 +32,7 @@ impl QuotaUnit {
             QuotaUnit::Credits => "credits",
             QuotaUnit::Requests => "requests",
             QuotaUnit::Tokens => "tokens",
+            QuotaUnit::Beans => "beans",
             QuotaUnit::Unknown => "unknown",
         }
     }
@@ -38,6 +41,7 @@ impl QuotaUnit {
             "credits" => QuotaUnit::Credits,
             "requests" => QuotaUnit::Requests,
             "tokens" => QuotaUnit::Tokens,
+            "beans" => QuotaUnit::Beans,
             _ => QuotaUnit::Unknown,
         }
     }

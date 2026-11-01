@@ -5712,3 +5712,75 @@ Qoder 模块 95 条通过。文档见 `docs/PROVIDERS.md` §2。
 - 版本 0.2.3 → 0.2.4；README 徽章 779 tests，部署脚本/文档文件名同步。
 - 779 passed，clippy/fmt 通过；aarch64-musl 部署并重启，路由器配置加入
   `suanlidou`（`enabled = false`），启动与 `/v1/models` 正常。
+
+## 82. Suanlidou 算力豆余量：协议落地（2026-11-01）
+
+证据：`qodercmcc.trace`（Qoder CN 中国移动联名）+ 按抓包对订单中心实况回放。
+**只做余量查询，不做签到，也不代理对话。**
+
+上游事实：
+
+- Qoder CN `GET /api/v2/quota/usage?outerProviders=cmcc` 的
+  `outerProviders[0].usageLogLink` 里带 `token=sso_agent_<uuid>`；
+  带不带 `outerProviders=cmcc` 的 `userQuota`/`addOnQuota` 数值完全相同 →
+  **Qoder 积分不是算力豆**，两者必须分开记。
+- 订单中心 `https://ai.soho.komect.com/ai/llm/order-center/public`：
+  `POST /client/v1/ssoLogin {sso_token}` → `data.order_session`；
+  `POST /client/v1/token/usage {order_session,page,pageNum,page_size}`
+  → `userTotalBalance` / `userRemainBalance`（原始单位）。
+  实况回放：`9500000` / `9429699`，÷ 10 000 = 950.0 / **942.9699 算力豆**。
+- 令牌无效返回业务码 `3004`；旧 `POST /client/v1/cmt/balance`（CMT 台账）在抓包账号上
+  返回空资源，未采用。
+
+落地：
+
+- [providers/suanlidou/mod.rs](file:///D:/codespace/POOL/src/providers/suanlidou/mod.rs)：
+  重写为真实协议——`sso_token()`（先取凭据 `sso_token`，否则从 Qoder 额度链接的
+  `token=` 解析）、`ssoLogin` → `token/usage` → `(total, remaining)` ÷ 10 000；
+  `quota()` 返回 `QuotaUnit::Beans`、`status = Known`；缺字段报错而不是写 0；
+  3004 → `AuthInvalid`，401 → `AuthExpired`。能力只有 `quota = true`。
+- [quota/mod.rs](file:///D:/codespace/POOL/src/quota/mod.rs)：新增 `QuotaUnit::Beans`
+  （`"beans"`）。
+- [runtime/mod.rs](file:///D:/codespace/POOL/src/runtime/mod.rs)：传入 `reqwest::Client`，
+  仍限定 CN。
+- [admin/api/mod.rs](file:///D:/codespace/POOL/src/admin/api/mod.rs)：
+  `POST /admin/api/auth/suanlidou/session`（`{session,name}`）：先 `quota()` 校验，
+  通过后才落库，返回 `{account_id, unit, total, remaining}`。
+- [admin/account/mod.rs](file:///D:/codespace/POOL/src/admin/account/mod.rs)：
+  `persist_suanlidou_session`，外部身份 `suanlidou:cn:sso-<指纹>`，
+  凭据 `{"sso_token": ...}`。
+- Web UI：[web/app.js](file:///D:/codespace/POOL/web/app.js) 新增 `suanlidou` 条目，
+  会话导入改为按 Provider 的 `sessionPath`/占位符/校验（Loomy 与 Suanlidou 共用）；
+  [web/index.html](file:///D:/codespace/POOL/web/index.html) 增加子导航按钮。
+- 文档：`docs/PROVIDERS.md` §9、§14 改写为已实现；`config.example.toml` 注释更新；
+  README Provider 表与真实账号额度表补 Suanlidou。
+
+测试：`providers/suanlidou` 7 条（链接解析、SSO 令牌换会话并按 10 000 缩放、
+Qoder 令牌→链接→余额、字符串余额解析、3004 → AuthInvalid、缺字段报错不写 0、
+无凭据 → AuthInvalid）。合计 **783 passed**，
+`cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` 通过。
+
+实况导入（本地临时实例，2026-11-01）：
+
+```
+GET  https://openapi.qoder.com.cn/api/v2/quota/usage?outerProviders=cmcc
+     → outerProviders[0].usageLogLink，token=sso_agent_…（46 字符）
+POST /admin/api/auth/suanlidou/session {"session":"dt-…（Qoder 访问令牌）"}
+     → {"account_id":"39cfa90f…","external_id":"suanlidou:cn:qoder-e93682dfc8bb9f46",
+        "unit":"beans","total":950.0,"remaining":942.9699}
+POST /admin/api/accounts/39cfa90f…/quota
+     → unit beans, status known, total 950.0, remaining 942.9699
+GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
+```
+
+实况暴露并修正的两点：
+
+1. `token/usage` 的余额是 **JSON 字符串**（`"9500000"`），不是数字；首版用
+   `as_f64()` 解析失败，改为同时接受数字与字符串，并补测试。
+2. `sso_agent_` 链接令牌是短时的：抓包得到的那个令牌当天晚些时候已返回 3004。
+   因此导入端点按值自动分流——`sso_agent_` 前缀存为 `sso_token`，其余视为
+   Qoder CN 访问令牌存为 `access_token`（每次查询向 Qoder 换新链接），
+   外部身份分别用 `sso-`/`qoder-` 前缀，互不覆盖。
+
+未覆盖：管理台导入端点没有自动化测试（需要把订单中心打桩进 `AdminState`），
+以实况导入代替；对话/模型/签到保持 Unsupported。

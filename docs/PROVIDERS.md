@@ -176,7 +176,7 @@
 | WorkBuddy Intl | 已实现（MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（credits；M14-C，MockVerified） | Unsupported | unavailable（首条 system/会话头未适配；签到 Unsupported） |
 | Loomy CN | 已实现（会话导入；模型发现/Chat/SSE/额度 Live Verified 2026-10-30） | 已实现（真实账号 10 个 chat 模型） | 已实现（Live Verified；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified） | Unsupported（不做签到/领奖） | experimental（Chat/SSE/额度已实测；无 refresh，14 天需重导） |
 | OfficeAce CN | 已实现（M17；华为云 PKCE + DPoP 轮询） | 已实现（MockVerified） | 已实现（OpenAI 协议；MockVerified） | Unsupported（无原生会话） | 已实现（officeace_points 主账；MockVerified） | 已实现（每日 bonus claim；默认关闭，MockVerified） | experimental（无真实账号；V11/V4 签名已按参考向量逐字节比对） |
-| Suanlidou CN（中国移动算力豆） | 未实现（等待抓包） | 未实现 | 未实现 | Unsupported（无上游会话） | 未实现（仅计划余量查询） | Unsupported | unavailable（仅 Provider 占位；无协议、无账号） |
+| Suanlidou CN（中国移动算力豆） | Unsupported（无对话协议，不代理 Chat） | Unsupported | Unsupported | Unsupported（无上游会话） | 已实现（算力豆余额；order-center 只读，Live Verified 2026-11-01） | Unsupported（不做签到/领奖） | experimental（SSO 令牌导入 + 余量查询 Live Verified；无 Chat、无签到） |
 | CodeBuddy CN | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 | CodeBuddy Intl | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 
@@ -478,14 +478,32 @@ Coding2API 的适配行为：
 3. 上游拒绝设备/客户端头时，记录为限制，不通过伪造头解决。
 4. 状态变更必须同时更新本节、§9 能力表与 `PROGRESS.md`，并附审计日期与证据来源。
 
-## 14. China Mobile Suanlidou（算力豆）— 占位
+## 14. China Mobile Suanlidou（算力豆）
 
-- **状态**：`unavailable`。上游协议尚未抓包，**没有任何已实现能力**；该 Provider 仅用于
-  提前建立注册项与账号位，所有探针返回 Unsupported，不虚构端点或余额。
-- **范围（操作者口径）**：没有签到；只计划做余量查询。签到执行器不注册该 kind，
-  管理台签到页对它是 Unsupported。
+- **状态**：`experimental`。已实现**算力豆余额查询**（Live Verified 2026-11-01）；
+  模型目录、对话、SSE、工具、签到一律 Unsupported——上游只暴露订单中心的账务接口，
+  没有可代理的对话协议。
+- **范围（操作者口径）**：没有签到；只有余量查询。签到执行器不注册该 kind，
+  管理台签到页对它是 Unsupported。与 Qoder 并列、互不依赖：Qoder 的
+  `/api/v2/quota/usage` 积分**不是**算力豆（带不带 `outerProviders=cmcc` 数值相同）。
+- **协议（2026-11-01 抓包 + 实况回放）**：
+  - 基址 `https://ai.soho.komect.com/ai/llm/order-center/public`。
+  - `POST /client/v1/ssoLogin`，body `{"sso_token": "<令牌>"}` → `data.order_session`。
+  - `POST /client/v1/token/usage`，body `{"order_session", "page":1, "pageNum":1, "page_size":10}`
+    → `data.userTotalBalance` / `data.userRemainBalance`（**原始单位，JSON 字符串**，
+    如 `"9429699"`；解析同时接受数字与字符串）。
+  - 原始单位 ÷ 10 000 = 算力豆（实测 `"9429699"` → `942.9699`）。
+  - 令牌无效 → 业务码 `3004`，映射 `AuthInvalid`，不落库。
+  - 旧版 `POST /client/v1/cmt/balance`（CMT 台账）在抓包账号上返回空资源，未采用。
+- **凭据**：
+  - `sso_token`（`sso_agent_<uuid>`）：直接从 Qoder 用量链接取，**短时有效**
+    （抓包令牌当天即失效）。
+  - `access_token`（Qoder CN 访问令牌，`dt-…`，约 30 天）：每次查询先换新链接，
+    推荐用这个；Provider 会自己从 `/api/v2/quota/usage?outerProviders=cmcc` 取。
+- **管理台**：`POST /admin/api/auth/suanlidou/session`，body `{"session","name"}`。
+  值以 `sso_agent_` 开头按 `sso_token` 存，否则按 `access_token` 存；
+  先调 `quota()` 校验，成功才经 `CredentialService` 落库；返回
+  `{account_id, unit:"beans", total, remaining}`。
 - **配置**：`kind = "suanlidou"`，`region = "cn"`（只有中国站；`intl` 是配置错误），
   示例见 `config.example.toml`。
-- **未实现**：模型目录、对话、SSE、工具、额度、认证。等抓包后按事实补：
-  先补额度解析，再决定是否提供对话；额度未知必须保持 `null`，不得写 0。
-- **账号**：尚无授权/导入入口；拿到抓包确定凭据形态后再加管理台入口。
+- **未知额度**：上游缺字段时返回错误而不是 0；`QuotaSnapshot.unit = Beans`。

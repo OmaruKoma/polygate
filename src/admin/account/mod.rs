@@ -513,6 +513,100 @@ pub async fn persist_loomy_session(
     Ok(account)
 }
 
+/// Persist a validated Suanlidou SSO token.
+///
+/// Identity is `suanlidou:cn:sso-<fingerprint>`: the order center reports a
+/// phone number but the token itself is the only stable handle this adapter
+/// stores, and re-importing the same token must update that row instead of
+/// creating a duplicate.
+pub async fn persist_suanlidou_session(
+    state: &AdminState,
+    credential_key: &str,
+    secret_value: String,
+    requested_name: Option<&str>,
+) -> Result<Account, GatewayError> {
+    let region = Region::Cn;
+    // `sso_token` is short-lived, `access_token` re-derives the link each probe;
+    // keep the two kinds under separate identities so one does not overwrite the other.
+    let (label, auth_source) = if credential_key == "sso_token" {
+        ("sso", "sso-import")
+    } else {
+        ("qoder", "qoder-link")
+    };
+    let external_id = format!(
+        "suanlidou:cn:{label}-{}",
+        session_fingerprint(&secret_value)
+    );
+    let requested_name = requested_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(64).collect::<String>())
+        .unwrap_or_else(|| "Suanlidou 算力豆".to_string());
+    let metadata = json!({
+        "realm": region.as_str(),
+        "auth_source": auth_source,
+    });
+    let mut fields = serde_json::Map::new();
+    fields.insert(credential_key.to_string(), json!(secret_value));
+    let secret = crate::accounts::Credential::from_value(serde_json::Value::Object(fields));
+
+    if let Some(existing) = state
+        .accounts
+        .find_by_external(ProviderKind::Suanlidou, region, &external_id)
+        .await?
+    {
+        let status = state.accounts.credentials().status(&existing.id).await?;
+        match status.and_then(|status| status.revision) {
+            Some(revision) => {
+                state
+                    .accounts
+                    .credentials()
+                    .update(&existing.id, &secret, revision)
+                    .await?;
+            }
+            None => {
+                state
+                    .accounts
+                    .credentials()
+                    .save(&existing.id, &secret)
+                    .await?;
+            }
+        }
+        let updated = state
+            .accounts
+            .update(
+                &existing.id,
+                AccountUpdate {
+                    name: Some(requested_name),
+                    metadata: Some(metadata),
+                    ..AccountUpdate::default()
+                },
+            )
+            .await?;
+        state
+            .accounts
+            .record_auth_status(&existing.id, crate::accounts::AuthStatus::Valid, None)
+            .await?;
+        return Ok(updated);
+    }
+
+    let mut request = CreateAccount::new(
+        ProviderKind::Suanlidou,
+        region,
+        requested_name,
+        Some(secret.to_json().clone()),
+    );
+    request.provider = "suanlidou-cn".to_string();
+    request.external_id = Some(external_id);
+    request.metadata = metadata;
+    let account = state.accounts.create(request).await?;
+    state
+        .accounts
+        .record_auth_status(&account.id, crate::accounts::AuthStatus::Valid, None)
+        .await?;
+    Ok(account)
+}
+
 /// Persist a successful OfficeAce authorization.
 ///
 /// Identity is `officeace:cn:<account_id>`; when the control plane does not

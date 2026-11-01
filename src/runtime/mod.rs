@@ -395,6 +395,7 @@ fn build_registry(
                     provider.provider_id(),
                     provider.region,
                     provider.verification(),
+                    reqwest::Client::new(),
                 )))?;
             }
             ProviderKind::Workbuddy => {

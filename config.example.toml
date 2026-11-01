@@ -214,10 +214,11 @@ name = "Mock (development)"
 # region = "cn"                       # the only deployment; "intl" is rejected
 # enabled = false
 #
-# Scaffold only: the upstream protocol has not been captured yet, so the
-# provider advertises no capability and every probe answers Unsupported. It is
-# kept so the provider entry exists ahead of the capture; fill in the quota
-# probe once a real capture is available. No check-in on this platform.
+# Quota only: reads the 算力豆 balance from the China Mobile order center
+# (ssoLogin -> token/usage, raw balance / 10000). Chat, models and check-in are
+# Unsupported — the upstream exposes no agent protocol. Import either the
+# short-lived `sso_agent_...` link token or the durable Qoder CN access token
+# through the admin console; nothing is stored until the probe succeeds.
 
 # ---------------------------------------------------------------------------
 # Client identity (`client.identity`) — Web UI, Qoder, TRAE, WorkBuddy

@@ -57,8 +57,33 @@
       successToast: "Loomy 账号已导入",
       supportsCheckin: false,
       sessionImport: true,
+      sessionPath: "loomy",
+      sessionPattern: "^[0-9a-zA-Z._-]{16,512}$",
+      sessionLabel: "登录会话",
+      sessionPlaceholder: "32 位十六进制会话字符串",
+      sessionHint: "会话位于桌面客户端的 userData/auth-session.json，复制其中 session 的值即可。",
+      sessionUserId: true,
       cnLoginOnly: true,
       regionHint: "Loomy 只有中国站一个部署，站点固定为 CN。",
+    },
+    suanlidou: {
+      label: "Suanlidou",
+      authPath: "suanlidou",
+      siteNote:
+        "算力豆（中国移动）没有浏览器授权入口，也没有签到：只能导入 Qoder 中国移动联名权益页里用量日志链接的 SSO 令牌，并查询算力豆余量。PolyGate 只保存令牌，不保存手机号或密码，也不生成设备身份。",
+      startLabel: "导入令牌",
+      successToast: "Suanlidou 账号已导入",
+      supportsCheckin: false,
+      sessionImport: true,
+      sessionPath: "suanlidou",
+      sessionPattern: "^[0-9A-Za-z._:-]{16,512}$",
+      sessionLabel: "SSO 令牌或 Qoder 访问令牌",
+      sessionPlaceholder: "sso_agent_… 令牌，或 Qoder CN 访问令牌",
+      sessionHint:
+        "sso_agent_ 令牌来自 Qoder 中国移动联名权益页的用量日志链接（链接里 token= 后面的值），但它很快过期；粘贴 Qoder CN 访问令牌则可每次查询时自动换取新链接。PolyGate 只保存这一个值。",
+      sessionUserId: false,
+      cnLoginOnly: true,
+      regionHint: "算力豆只有中国移动一个站点，站点固定为 CN。",
     },
     officeace: {
       label: "OfficeAce",
@@ -537,18 +562,20 @@
         <label>站点</label>
         <div class="segmented" id="flow-region">
           <button data-region="cn" class="${region === "cn" ? "active" : ""}">CN 中国站</button>
-          <button data-region="intl" class="${region === "intl" ? "active" : ""}" ${provider.cnLoginOnly ? "disabled title=\"TRAE 国际站授权尚未验证\"" : ""}>Intl 国际站</button>
+          <button data-region="intl" class="${region === "intl" ? "active" : ""}" ${provider.cnLoginOnly ? `disabled title="${esc(provider.intlDisabledNote || "该 Provider 只提供 CN 站点")}"` : ""}>Intl 国际站</button>
         </div>
         ${state.provider === "qoder"
           ? `<p class="hint">Qoder Intl 授权流程尚未用真实账号实测；失败时请改用 CN 站点。</p>`
           : ""}
         ${provider.cnLoginOnly
-          ? `<p class="hint">${esc(provider.regionHint || "TRAE 仅 CN 站点提供已验证的授权入口；国际站凭据可在导入后刷新。")}</p>`
+          ? `<p class="hint">${esc(provider.regionHint || "该 Provider 仅 CN 站点提供已验证的授权入口。")}</p>`
           : ""}
         ${provider.sessionImport
-          ? `<label>登录会话<input id="flow-session" spellcheck="false" autocomplete="off" placeholder="32 位十六进制会话字符串"></label>
-             <label>用户 ID（可选）<input id="flow-userid" spellcheck="false" autocomplete="off" placeholder="填了就能把新会话绑到同一账号"></label>
-             <p class="hint">会话位于桌面客户端的 userData/auth-session.json，复制其中 session 的值即可。</p>`
+          ? `<label>${esc(provider.sessionLabel)}<input id="flow-session" spellcheck="false" autocomplete="off" placeholder="${esc(provider.sessionPlaceholder)}"></label>
+             ${provider.sessionUserId
+               ? `<label>用户 ID（可选）<input id="flow-userid" spellcheck="false" autocomplete="off" placeholder="填了就能把新会话绑到同一账号"></label>`
+               : ""}
+             <p class="hint">${esc(provider.sessionHint)}</p>`
           : ""}
         ${provider.needsDeviceIds
           ? `<label>machineId（32 位十六进制）<input id="flow-machine" maxlength="32" spellcheck="false" placeholder="与登录浏览器一致的 machineId"></label>
@@ -576,25 +603,34 @@
     modal.flowRegion = () => selected;
   }
 
-  async function importLoomySession(modal, provider) {
+  function importedSessionSummary(result) {
+    if (result && typeof result.remaining === "number") {
+      const unit = result.unit === "beans" ? "算力豆" : result.unit || "";
+      return `（余量 ${result.remaining} ${unit}）`;
+    }
+    if (result && typeof result.models === "number") {
+      return `（${result.models} 个模型，重启网关后进入 /v1/models）`;
+    }
+    return "";
+  }
+
+  async function importSession(modal, provider) {
     const status = $("#flow-status", modal);
     const session = $("#flow-session", modal).value.trim();
-    const userid = $("#flow-userid", modal).value.trim();
+    const useridNode = $("#flow-userid", modal);
+    const userid = useridNode ? useridNode.value.trim() : "";
     const name = $("#flow-name", modal).value.trim();
-    if (!/^[0-9a-zA-Z._-]{16,512}$/.test(session)) {
-      status.textContent = "会话格式不对：应当是从 auth-session.json 复制出来的一整串字符，不含空格。";
+    if (!new RegExp(provider.sessionPattern).test(session)) {
+      status.textContent = "格式不对：请粘贴一整串令牌，不含空格。";
       return;
     }
-    status.textContent = "正在向 Loomy 校验会话…";
+    status.textContent = `正在向 ${provider.label} 校验令牌…`;
     try {
-      const result = await api("/admin/api/auth/loomy/session", {
+      const result = await api(`/admin/api/auth/${provider.sessionPath}/session`, {
         method: "POST",
         body: JSON.stringify({ session, userid: userid || null, name: name || null }),
       });
-      toast(
-        `${provider.successToast}（${result.models} 个模型，重启网关后进入 /v1/models）`,
-        "ok",
-      );
+      toast(`${provider.successToast}${importedSessionSummary(result)}`, "ok");
       closeModal();
       renderRoute();
     } catch (error) {
@@ -606,7 +642,7 @@
     const provider = modal.provider || PROVIDERS[state.provider] || PROVIDERS.codearts;
     const status = $("#flow-status", modal);
     if (provider.sessionImport) {
-      return importLoomySession(modal, provider);
+      return importSession(modal, provider);
     }
     const region = provider.cnLoginOnly ? "cn" : modal.flowRegion();
     const name = $("#flow-name", modal).value.trim();
