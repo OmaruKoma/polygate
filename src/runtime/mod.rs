@@ -41,8 +41,8 @@ use crate::providers::profile::Identity;
 use crate::providers::qoder::provider::QoderProvider;
 use crate::providers::{
     ClientHeaders, CodeArtsHttp, CodeArtsProvider, LoomyProvider, MockConfig, MockProvider,
-    MockReply, MockToolCall, OfficeAceProvider, ProviderKey, ProviderRegistry, TraeProvider,
-    UpstreamModel, WorkbuddyProvider,
+    MockReply, MockToolCall, OfficeAceProvider, ProviderKey, ProviderRegistry, SuanlidouProvider,
+    TraeProvider, UpstreamModel, WorkbuddyProvider,
 };
 use crate::quota::QuotaSnapshot;
 use crate::security::SecretBox;
@@ -382,6 +382,20 @@ fn build_registry(
                     accounts.credentials().clone(),
                 )));
                 registry.register(Arc::new(officeace))?;
+            }
+            ProviderKind::Suanlidou => {
+                // China Mobile deployment only; an `intl` entry would need
+                // endpoints that do not exist yet.
+                if provider.region != Region::Cn {
+                    return Err(GatewayError::config(
+                        "provider suanlidou has no international deployment; use region = \"cn\"",
+                    ));
+                }
+                registry.register(Arc::new(SuanlidouProvider::new(
+                    provider.provider_id(),
+                    provider.region,
+                    provider.verification(),
+                )))?;
             }
             ProviderKind::Workbuddy => {
                 let client = reqwest::Client::new();

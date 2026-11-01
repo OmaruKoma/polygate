@@ -5686,3 +5686,29 @@ Qoder 模块 95 条通过。文档见 `docs/PROVIDERS.md` §2。
 - 776 passed，clippy/fmt 通过；aarch64-musl 已部署到路由器（`polygate 0.2.3`）。
 - 线上核对：部署后 `/v1/models` 仍有 26 条 Qoder 模型、无 `cmcc/*`——
   池内 CN 账号未授权联名，回退路径生效、未丢模型。
+
+## 81. 新增 Provider：中国移动算力豆（Suanlidou，2026-11-01）
+
+需求：作为与 Qoder 并列的独立 Provider；**没有签到，只做余量查询**；协议等抓包后再补。
+
+落地（本次只做占位，不虚构协议）：
+
+- [config/mod.rs](file:///D:/codespace/POOL/src/config/mod.rs)：新增 `ProviderKind::Suanlidou`
+  （`suanlidou`、显示名 `China Mobile Suanlidou`）。
+- [providers/suanlidou/mod.rs](file:///D:/codespace/POOL/src/providers/suanlidou/mod.rs)：
+  Provider 声明全部能力为 `false`；`quota()` 返回 Unsupported，错误信息写明
+  “protocol has not been captured yet”；没有签到执行器，签到页对它自然是 Unsupported。
+- [runtime/mod.rs](file:///D:/codespace/POOL/src/runtime/mod.rs)：注册构造，限定 `region = "cn"`
+  （`intl` 视为配置错误）。
+- `config.example.toml` 增加注释示例（`enabled = false`）；`docs/PROVIDERS.md` §9 增加能力行、
+  §14 增加占位说明；README Provider 表与徽章（9 → 10）。
+- 测试：3 条（无能力声明、kind/身份注册、额度拒绝且不报 0）。
+
+待抓包后实现：额度端点与解析（未知保持 `null`）、凭据形态、账号导入入口；
+是否提供对话能力再按抓包决定。
+
+### 81.1 v0.2.4
+
+- 版本 0.2.3 → 0.2.4；README 徽章 779 tests，部署脚本/文档文件名同步。
+- 779 passed，clippy/fmt 通过；aarch64-musl 部署并重启，路由器配置加入
+  `suanlidou`（`enabled = false`），启动与 `/v1/models` 正常。

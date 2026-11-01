@@ -176,6 +176,7 @@
 | WorkBuddy Intl | 已实现（MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（credits；M14-C，MockVerified） | Unsupported | unavailable（首条 system/会话头未适配；签到 Unsupported） |
 | Loomy CN | 已实现（会话导入；模型发现/Chat/SSE/额度 Live Verified 2026-10-30） | 已实现（真实账号 10 个 chat 模型） | 已实现（Live Verified；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified） | Unsupported（不做签到/领奖） | experimental（Chat/SSE/额度已实测；无 refresh，14 天需重导） |
 | OfficeAce CN | 已实现（M17；华为云 PKCE + DPoP 轮询） | 已实现（MockVerified） | 已实现（OpenAI 协议；MockVerified） | Unsupported（无原生会话） | 已实现（officeace_points 主账；MockVerified） | 已实现（每日 bonus claim；默认关闭，MockVerified） | experimental（无真实账号；V11/V4 签名已按参考向量逐字节比对） |
+| Suanlidou CN（中国移动算力豆） | 未实现（等待抓包） | 未实现 | 未实现 | Unsupported（无上游会话） | 未实现（仅计划余量查询） | Unsupported | unavailable（仅 Provider 占位；无协议、无账号） |
 | CodeBuddy CN | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 | CodeBuddy Intl | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 
@@ -476,3 +477,15 @@ Coding2API 的适配行为：
 2. 缺凭据或区域不可访问时保持 `unavailable`，不得用 Mock 结果替代。
 3. 上游拒绝设备/客户端头时，记录为限制，不通过伪造头解决。
 4. 状态变更必须同时更新本节、§9 能力表与 `PROGRESS.md`，并附审计日期与证据来源。
+
+## 14. China Mobile Suanlidou（算力豆）— 占位
+
+- **状态**：`unavailable`。上游协议尚未抓包，**没有任何已实现能力**；该 Provider 仅用于
+  提前建立注册项与账号位，所有探针返回 Unsupported，不虚构端点或余额。
+- **范围（操作者口径）**：没有签到；只计划做余量查询。签到执行器不注册该 kind，
+  管理台签到页对它是 Unsupported。
+- **配置**：`kind = "suanlidou"`，`region = "cn"`（只有中国站；`intl` 是配置错误），
+  示例见 `config.example.toml`。
+- **未实现**：模型目录、对话、SSE、工具、额度、认证。等抓包后按事实补：
+  先补额度解析，再决定是否提供对话；额度未知必须保持 `null`，不得写 0。
+- **账号**：尚无授权/导入入口；拿到抓包确定凭据形态后再加管理台入口。

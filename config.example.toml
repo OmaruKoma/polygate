@@ -209,6 +209,16 @@ name = "Mock (development)"
 #   [providers.options]
 #   "checkin.claim_enabled" = "false" # requires the 16-digit device id
 
+# [[providers]]
+# kind = "suanlidou"                  # China Mobile Suanlidou (算力豆)
+# region = "cn"                       # the only deployment; "intl" is rejected
+# enabled = false
+#
+# Scaffold only: the upstream protocol has not been captured yet, so the
+# provider advertises no capability and every probe answers Unsupported. It is
+# kept so the provider entry exists ahead of the capture; fill in the quota
+# probe once a real capture is available. No check-in on this platform.
+
 # ---------------------------------------------------------------------------
 # Client identity (`client.identity`) — Web UI, Qoder, TRAE, WorkBuddy
 # ---------------------------------------------------------------------------

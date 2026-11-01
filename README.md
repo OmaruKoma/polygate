@@ -5,9 +5,9 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/version-0.2.3-5bc4b5" alt="Version">
-  <img src="https://img.shields.io/badge/tests-776%20passing-59bd91" alt="Tests">
-  <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
+  <img src="https://img.shields.io/badge/version-0.2.4-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/tests-779%20passing-59bd91" alt="Tests">
+  <img src="https://img.shields.io/badge/providers-10-5bc4b5" alt="Providers">
 </p>
 
 <p align="center">
@@ -108,6 +108,7 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | Loomy（讯飞） | CN | 导入桌面端会话（14 天） | **LiveVerified** |
 | OfficeAce（华为 AgentArts） | CN | 华为云授权（PKCE + DPoP + STS） | **LiveVerified** |
 | TRAE（字节） | CN | 登录态 | MockVerified（无真实账号） |
+| Suanlidou（中国移动算力豆） | CN | 未抓包（占位） | 未实现（仅 Provider 占位，无签到） |
 | Mock | — | 无 | 仅测试与本地演示 |
 
 在软路由上的实际部署里，除 TRAE 外的每个 Provider 都有真实账号完成授权：
