@@ -5655,3 +5655,34 @@ clippy/fmt 通过；aarch64-musl 已部署并重启（11:56），`/admin/` 200�
   `docs/DEPLOYMENT.md`。
 - `.gitignore` 从 `/Untitled*.trace` 放宽到 `/*.trace`、`/*.chlz`、`/*.csv`，
   防止任何本地抓包（含实时 token）被误提交。
+
+## 80. Qoder CN 中国移动联名渠道（2026-11-01）
+
+用户提供桌面端 asar/CLI 逆向结论：Qoder CN 没有独立客户端，中国移动联名
+（内部 `china_mobile` / provider `cmcc`）由「合作方方案 + 外部模型渠道」两级开关激活；
+授权由桌面端通过 openapi `/api/v1/partner_plan/authorize` 完成；模型目录靠
+`outerProviders=cmcc` 放开，模型 key 带 `cmcc/` 前缀；推理仍走同一
+`agent_chat_generation`，但请求体 `parameters.outerProvider` 必须回显前缀。
+
+PolyGate 落地（协议事实，不做授权/不伪造资格）：
+
+- [region.rs](file:///D:/codespace/POOL/src/providers/qoder/region.rs) 新增
+  `CN_OUTER_MODELS_PATH`。
+- [gateway.rs](file:///D:/codespace/POOL/src/providers/qoder/gateway.rs)：CN 目录先请求
+  带 `outerProviders=cmcc` 的视图；该视图失败（未授权/拒绝）或解析不到模型时回退普通目录，
+  不会因为联名不可用而丢整份模型列表。Intl 保持原路径。
+- [convert.rs](file:///D:/codespace/POOL/src/providers/qoder/convert.rs)：模型 key 含 `/`
+  时把前缀写入 `parameters.outerProvider`（与 CLI 的 `getOuterProviderFromModelKey` 一致）。
+- 授权（partner_plan）仍由桌面端完成；网关不自动 authorize/revoke，避免替用户改账号状态。
+
+测试：新增 CN 外部视图优先、CN 回退、Intl 不带参数、`outerProvider` 回显共 4 条；
+Qoder 模块 95 条通过。文档见 `docs/PROVIDERS.md` §2。
+待真机验证：池内 CN 账号（edufx，`personal_professional_trial`）未授权中国移动联名，
+预期目录请求回退普通视图；要出现 `cmcc/*` 模型需要先加入已授权的手机号账号。
+
+### 80.1 v0.2.3
+
+- 版本 0.2.2 → 0.2.3；README 徽章 776 tests，部署脚本/文档文件名同步。
+- 776 passed，clippy/fmt 通过；aarch64-musl 已部署到路由器（`polygate 0.2.3`）。
+- 线上核对：部署后 `/v1/models` 仍有 26 条 Qoder 模型、无 `cmcc/*`——
+  池内 CN 账号未授权联名，回退路径生效、未丢模型。

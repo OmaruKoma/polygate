@@ -63,6 +63,22 @@
   只领取 `actionType=CLAIM_BENEFIT && claimStatus=CLAIMABLE`；claim 响应 `replayed:true` 表示重复领取。
   Intl 抓包（`qoder-intel.trace`，桌面端 0.5.1，2026-11-01）：每日 100 credits，**10:00（UTC+8）刷新**，
   领取后 30 天有效；桌面端 claim 用空 body，`{}` 同样被接受。
+- **中国移动联名（CN，`china_mobile` / `cmcc`）**：没有独立客户端，联名能力编在同一份
+  Qoder CN 包内，靠「合作方方案 + 外部模型渠道」两级开关激活。授权走 openapi
+  （`GET /api/v1/me/partner_plans?partner_codes=china_mobile`、
+  `POST /api/v1/partner_plan/authorize`），由桌面端完成，网关**不自动授权**。
+  资格：个人版 + 手机号登录；响应要求 `partner_code=china_mobile` 且
+  `subscription_status ∈ {ACTIVE,INACTIVE}`。
+  模型目录：CN 网关 `GET /algo/api/v2/model/list?Encode=1&outerProviders=cmcc`，
+  返回的 key 带 `<provider>/<model>` 前缀（如 `cmcc/<model>`）；推理仍走
+  `/algo/api/v2/service/pro/sse/agent_chat_generation`，但必须在
+  `parameters.outerProvider` 回显同一前缀，否则上游报
+  `get_model_policy model must use the outerProvider key prefix`；
+  且不能与 `custom_model`（BYOK）并存。这类模型的计费走移动侧 Token 套餐，
+  不是 Qoder credits（`/api/v2/quota/usage?outerProviders=cmcc` 提供
+  用量/购买链接）。
+  PolyGate：CN 目录请求先带 `outerProviders=cmcc`，账号未获授权/被拒时回退到普通
+  目录，不会因联名不可用而丢模型；聊天按 key 前缀自动填 `outerProvider`。
 - **当前状态**：`experimental`。COSY 实现工作量大，需完整签名/编码测试向量后才可发布为可用。
 
 ## 3. ByteDance TRAE（CN / International）

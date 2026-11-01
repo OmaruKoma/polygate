@@ -197,6 +197,21 @@ fn body_always_streams_and_keeps_verified_parameters() {
 }
 
 #[test]
+fn a_prefixed_model_echoes_its_outer_provider() {
+    let mut request = basic_request();
+    request.model = "cmcc/glm-5".into();
+    let body = convert::build_body(&request).unwrap();
+    assert_eq!(body["model"], json!("cmcc/glm-5"));
+    assert_eq!(body["parameters"]["outerProvider"], json!("cmcc"));
+
+    let body = convert::build_body(&basic_request()).unwrap();
+    assert!(
+        body["parameters"].get("outerProvider").is_none(),
+        "a plain model must not invent an outer provider"
+    );
+}
+
+#[test]
 fn developer_role_is_normalised_to_system() {
     let request = ChatRequest::new(
         "qmodel",

@@ -41,6 +41,9 @@ pub struct QoderGateway {
     client: reqwest::Client,
     bases: Vec<String>,
     identity: Identity,
+    /// CN only: ask the catalogue for the partner channel (China Mobile) as
+    /// well, and fall back to the plain view when the account is not eligible.
+    outer_providers: bool,
 }
 
 impl std::fmt::Debug for QoderGateway {
@@ -61,6 +64,7 @@ impl QoderGateway {
                 .map(|base| base.trim_end_matches('/').to_string())
                 .collect(),
             identity: Identity::default(),
+            outer_providers: region == crate::config::Region::Cn,
         }
     }
 
@@ -76,13 +80,14 @@ impl QoderGateway {
 
     pub fn with_base(
         client: reqwest::Client,
-        _region: crate::config::Region,
+        region: crate::config::Region,
         base: impl Into<String>,
     ) -> Self {
         Self {
             client,
             bases: vec![base.into().trim_end_matches('/').to_string()],
             identity: Identity::default(),
+            outer_providers: region == crate::config::Region::Cn,
         }
     }
 
@@ -93,21 +98,41 @@ impl QoderGateway {
         credential: &QoderCredential,
     ) -> Result<Vec<UpstreamModel>, GatewayError> {
         let session = session_for(credential, self.identity)?;
+        let paths: Vec<&str> = if self.outer_providers {
+            vec![region::CN_OUTER_MODELS_PATH, region::MODELS_PATH]
+        } else {
+            vec![region::MODELS_PATH]
+        };
         let mut last_error = None;
         for base in &self.bases {
-            let url = format!("{base}{}", region::MODELS_PATH);
-            let date = cosy::cosy_date(chrono::Utc::now());
-            let request_id = cosy::new_request_id();
-            let headers = session.models_headers("", &url, &date, &request_id)?;
-            let request = self
-                .client
-                .get(&url)
-                .headers(header_map(headers)?)
-                .timeout(HEADER_TIMEOUT);
-            match self.send_json(request, &url).await {
-                Ok(payload) => return parse_models(&payload),
-                Err(error) if retry_on_another_host(&error) => last_error = Some(error),
-                Err(error) => return Err(error),
+            for (position, path) in paths.iter().enumerate() {
+                let url = format!("{base}{path}");
+                let date = cosy::cosy_date(chrono::Utc::now());
+                let request_id = cosy::new_request_id();
+                let headers = session.models_headers("", &url, &date, &request_id)?;
+                let request = self
+                    .client
+                    .get(&url)
+                    .headers(header_map(headers)?)
+                    .timeout(HEADER_TIMEOUT);
+                let last_path = position + 1 == paths.len();
+                match self.send_json(request, &url).await {
+                    Ok(payload) => match parse_models(&payload) {
+                        Ok(models) => return Ok(models),
+                        Err(error) if !last_path => last_error = Some(error),
+                        Err(error) => return Err(error),
+                    },
+                    // The partner view may be refused for an account without
+                    // the plan; that must not hide the ordinary catalogue.
+                    Err(error) if !last_path => last_error = Some(error),
+                    Err(error) => {
+                        if retry_on_another_host(&error) {
+                            last_error = Some(error);
+                            break;
+                        }
+                        return Err(error);
+                    }
+                }
             }
         }
         Err(last_error.unwrap_or_else(|| GatewayError::transport("Qoder has no gateway host")))

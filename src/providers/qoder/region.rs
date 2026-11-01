@@ -46,6 +46,13 @@ pub const LEGACY_CHECKIN_CLAIM_PATH: &str = "/sash/api/v1/me/daily-check-in/clai
 pub const CHAT_PATH: &str = "/algo/api/v2/service/pro/sse/agent_chat_generation";
 pub const CHAT_QUERY: &str = "FetchKeys=llm_model_result&AgentId=agent_common&Encode=1";
 pub const MODELS_PATH: &str = "/algo/api/v2/model/list?Encode=1";
+
+/// CN partner channel catalogue view (China Mobile, `china_mobile`). The
+/// desktop client passes its external providers here; returned keys keep the
+/// `<provider>/<model>` prefix and the same prefix must be echoed as
+/// `parameters.outerProvider` when chatting.
+pub const CN_OUTER_MODELS_PATH: &str = "/algo/api/v2/model/list?Encode=1&outerProviders=cmcc";
+
 /// The signature does not cover the HTTP method. These are the only methods the
 /// reference implementation uses: a model list GET and a chat POST.
 pub const MODELS_METHOD: &str = "GET";

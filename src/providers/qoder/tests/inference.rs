@@ -131,10 +131,58 @@ async fn model_list_is_signed_and_parsed() {
     let requests = server.requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].method, "GET");
-    assert_eq!(requests[0].target, format!("{MODELS_PATH}?Encode=1"));
+    assert_eq!(
+        requests[0].target,
+        format!("{MODELS_PATH}?Encode=1&outerProviders=cmcc"),
+        "the CN catalogue asks for the partner channel first"
+    );
     assert_eq!(requests[0].body, "", "a GET signs the empty body");
     assert!(requests[0].header("x-model-key").is_none());
     assert_signed(&requests[0], "");
+}
+
+#[tokio::test]
+async fn cn_model_list_falls_back_when_the_partner_view_is_refused() {
+    let server = spawn_server(|request| match request.path() {
+        MODELS_PATH if request.target.contains("outerProviders") => {
+            Reply::json(400, r#"{"code":400,"msg":"outer provider not allowed"}"#)
+        }
+        MODELS_PATH => Reply::json(200, json!({"chat":[{"key":"dfmodel"}]}).to_string()),
+        _ => Reply::json(404, "{}"),
+    })
+    .await;
+
+    let models = provider(&server.base_url)
+        .list_models(&credential())
+        .await
+        .unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].id, "dfmodel");
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].target.contains("outerProviders=cmcc"));
+    assert_eq!(requests[1].target, format!("{MODELS_PATH}?Encode=1"));
+}
+
+#[tokio::test]
+async fn intl_model_list_does_not_ask_for_the_partner_channel() {
+    let server = spawn_server(|request| match request.path() {
+        MODELS_PATH => Reply::json(200, json!({"chat":[{"key":"dfmodel"}]}).to_string()),
+        _ => Reply::json(404, "{}"),
+    })
+    .await;
+    let provider = QoderProvider::with_base(
+        "qoder-intl",
+        Region::Intl,
+        Verification::Experimental,
+        reqwest::Client::new(),
+        server.base_url.clone(),
+    );
+    let models = provider.list_models(&credential()).await.unwrap();
+    assert_eq!(models.len(), 1);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].target, format!("{MODELS_PATH}?Encode=1"));
 }
 
 #[test]

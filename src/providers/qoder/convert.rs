@@ -71,6 +71,15 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, GatewayError> {
     if let Some(max_tokens) = request.max_output_tokens {
         parameters.insert("max_tokens".into(), json!(max_tokens));
     }
+    // Partner-channel models carry their provider as the key prefix
+    // (`cmcc/<model>`); the gateway requires the same prefix to be echoed in
+    // `parameters.outerProvider` or it rejects the request with
+    // "model must use the outerProvider key prefix".
+    if let Some((provider, model)) = request.model.split_once('/') {
+        if !provider.is_empty() && !model.is_empty() {
+            parameters.insert("outerProvider".into(), json!(provider));
+        }
+    }
     if !parameters.is_empty() {
         body.insert("parameters".into(), Value::Object(parameters));
     }
