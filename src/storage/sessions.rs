@@ -351,6 +351,28 @@ impl SessionRepo {
             .map_err(storage_error)?;
         Ok(result.rows_affected())
     }
+
+    /// Remove one binding whose TTL has already passed. A live row is never
+    /// touched, even when the caller raced with a refresh.
+    pub async fn delete_expired_key(
+        &self,
+        client_session_id: &str,
+        kind: ProviderKind,
+        region: Region,
+    ) -> Result<bool, GatewayError> {
+        let result = sqlx::query(
+            "DELETE FROM sessions WHERE client_session_id = ? AND provider_kind = ? \
+             AND region = ? AND expires_at <= ?",
+        )
+        .bind(client_session_id)
+        .bind(kind.as_str())
+        .bind(region.as_str())
+        .bind(encode_ts(Utc::now()))
+        .execute(&self.pool)
+        .await
+        .map_err(storage_error)?;
+        Ok(result.rows_affected() == 1)
+    }
 }
 
 fn map_session(row: &sqlx::sqlite::SqliteRow) -> Result<Session, GatewayError> {

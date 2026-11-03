@@ -524,6 +524,17 @@ impl SessionBindingService {
         })
     }
 
+    /// Drop a binding whose TTL has passed so the next request binds afresh.
+    /// The upstream session behind an expired binding is already gone, so there
+    /// is nothing worth keeping. Returns whether a row was removed.
+    pub async fn discard_expired(&self, key: &SessionKey) -> Result<bool, GatewayError> {
+        key.validate()?;
+        self.storage
+            .sessions()
+            .delete_expired_key(&key.client_session_id, key.kind, key.region)
+            .await
+    }
+
     /// Explicitly move a binding to another account. The upstream session id is
     /// cleared, never carried across accounts.
     pub async fn rebind(

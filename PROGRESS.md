@@ -5824,3 +5824,22 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 - 版本 0.2.6 → 0.2.7；README 徽章 version 0.2.7 / tests 776 / providers 9。
 - 验证：`cargo fmt --all`、`cargo test`（776 passed）、
   `cargo clippy --all-targets -- -D warnings` 均通过。
+
+## 85. v0.2.8：过期会话绑定自动重建（2026-11-03）
+
+- 现象：不带会话头的请求用 `sha256(model + 首条 user 文本)` 生成 `auto-*` 键；CodeArts
+  是粘性路由，绑定 TTL 24h。绑定过期后再发同一句 prompt 会永久返回
+  `session_binding_invalid`，因为 `acquire` 只会拒绝过期行，而管理台没有“重绑”入口。
+  线上库 257 条绑定中 256 条已过期。
+- 修复：[session_service/router.rs](file:///D:/codespace/POOL/src/session_service/router.rs)
+  在选号前检查 `expires_at`；过期即调用新增的
+  [`discard_expired`](file:///D:/codespace/POOL/src/session_service/service.rs)
+  （底层 [`delete_expired_key`](file:///D:/codespace/POOL/src/storage/sessions.rs)，
+  SQL 只匹配 `expires_at <= now`，并发刷新过的活行不会被删），随后按“无绑定”重新
+  选号并生成新的 upstream id。`invalid` 绑定语义不变，仍需显式恢复。
+- 测试：新增 `router_replaces_an_expired_binding_instead_of_failing`，并把
+  `restart_reopens_valid_bindings_...` 改为验证过期行会重绑；服务层“过期不被静默替换”
+  的约束保持不变。
+- 线上：清理 256 条过期绑定（备份 `polygate.db.bak-20261103-expired-sessions`），
+  原始 curl 复测 200。
+- 777 passed；fmt/clippy 通过；0.2.8 四产物发布并部署到路由器。

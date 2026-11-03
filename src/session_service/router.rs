@@ -16,6 +16,9 @@
 //! 2. failures are classified and either reset the upstream session (sticky,
 //!    same account) or update the account auth status. A busy account never
 //!    causes a silent rebind.
+//! 3. a binding whose TTL has passed is discarded and bound afresh: the
+//!    upstream session is already gone, so there is nothing to carry over and
+//!    a one-shot client must not inherit a permanent error.
 
 use std::sync::{Arc, Mutex};
 
@@ -110,6 +113,17 @@ impl SessionRouter {
         }
 
         let mut binding = self.sessions.get(&key).await?;
+        if binding
+            .as_ref()
+            .is_some_and(|session| session.expires_at <= chrono::Utc::now())
+        {
+            // The upstream session behind an expired binding is dead. Drop the
+            // row so the normal bind path picks an account and a fresh id; a
+            // concurrent refresh is left alone because the delete only matches
+            // rows that are still expired.
+            self.sessions.discard_expired(&key).await?;
+            binding = self.sessions.get(&key).await?;
+        }
         if let Some(session) = &binding {
             if excluded.contains(&session.account_id) {
                 let account = self.select_account(&key, excluded).await?;

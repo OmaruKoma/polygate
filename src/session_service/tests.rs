@@ -722,6 +722,59 @@ async fn router_is_sticky_and_generates_a_32_hex_upstream_id() {
 }
 
 #[tokio::test]
+async fn router_replaces_an_expired_binding_instead_of_failing() {
+    let fixture = Fixture::memory().await;
+    fixture.account("alpha").await;
+    let router = router(&fixture);
+    let session_key = key("client-1");
+
+    let first = router.open(session_key.clone()).await.expect("first open");
+    let stale_upstream = first.upstream_session_id().to_string();
+    router.finish(first).await;
+
+    let mut stored = fixture
+        .storage
+        .sessions()
+        .get(
+            &session_key.client_session_id,
+            session_key.kind,
+            session_key.region,
+        )
+        .await
+        .expect("get")
+        .expect("row");
+    stored.expires_at = Utc::now() - ChronoDuration::minutes(1);
+    fixture
+        .storage
+        .sessions()
+        .save(&stored)
+        .await
+        .expect("expire");
+
+    let second = router
+        .open(session_key.clone())
+        .await
+        .expect("an expired binding must rebind instead of failing");
+    assert_ne!(second.upstream_session_id(), stale_upstream);
+    assert_eq!(second.upstream_session_id().len(), 32);
+    router.finish(second).await;
+
+    let rebound = fixture
+        .storage
+        .sessions()
+        .get(
+            &session_key.client_session_id,
+            session_key.kind,
+            session_key.region,
+        )
+        .await
+        .expect("get")
+        .expect("row");
+    assert_eq!(rebound.state, SessionState::Active);
+    assert!(rebound.expires_at > Utc::now());
+}
+
+#[tokio::test]
 async fn router_never_carries_an_upstream_id_across_accounts() {
     let fixture = Fixture::memory().await;
     fixture.account("alpha").await;
@@ -974,7 +1027,7 @@ async fn auth_failure_blocks_the_bound_account_instead_of_switching() {
 }
 
 #[tokio::test]
-async fn restart_reopens_valid_bindings_and_keeps_invalid_or_expired_ones_blocked() {
+async fn restart_reopens_valid_bindings_keeps_invalid_blocked_and_rebinds_expired() {
     let fixture = Fixture::file().await;
     let alpha = fixture.account("alpha").await;
     let valid = key("s-valid");
@@ -1022,19 +1075,22 @@ async fn restart_reopens_valid_bindings_and_keeps_invalid_or_expired_ones_blocke
     assert_eq!(lease.upstream_session_id(), "up-valid");
     router.finish(lease).await;
 
-    for (session_key, expected) in [(&invalid, "upstream rejected"), (&expired, "expired")] {
-        let error = router
-            .open(session_key.clone())
-            .await
-            .expect_err("unusable bindings stay unusable");
-        assert_eq!(error.kind, ErrorKind::SessionBindingInvalid);
-        assert!(
-            error.message.contains(expected),
-            "{}: {}",
-            session_key.client_session_id,
-            error.message
-        );
-    }
+    let error = router
+        .open(invalid.clone())
+        .await
+        .expect_err("an invalid binding stays unusable");
+    assert_eq!(error.kind, ErrorKind::SessionBindingInvalid);
+    assert!(
+        error.message.contains("upstream rejected"),
+        "{}",
+        error.message
+    );
+
+    // An expired binding's upstream session is dead, so the router rebinds it
+    // instead of surfacing a permanent error.
+    let reborn = router.open(expired.clone()).await.expect("expired binding");
+    assert_ne!(reborn.upstream_session_id(), "up-expired");
+    router.finish(reborn).await;
 
     // Create-only binding does not revive an invalid row either.
     let outcome = service

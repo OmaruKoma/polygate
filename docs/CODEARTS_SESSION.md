@@ -193,7 +193,8 @@ Client Session
 | --- | --- |
 | `bind_if_absent(key, account_id, upstream?)` | 仅当键不存在时插入；已存在则原样返回（`created=false`）。**不会**因为调用方建议另一个账号而改绑 |
 | `attach_upstream(key, account, revision, id)` | 仅当 `account_id` 与 `binding_revision` 都匹配时写入；否则返回 `session_binding_invalid`。防止 A 账号的 `chat_id` 写到 B 账号 |
-| `acquire(key)` | 校验存在、未过期、`state=active`、账号存在/启用/认证可调度；然后取会话锁 + 账号槽。缺失/过期/失效**不创建、不迁移、不删除** |
+| `acquire(key)` | 校验存在、未过期、`state=active`、账号存在/启用/认证可调度；然后取会话锁 + 账号槽。缺失/过期/失效**不创建、不迁移、不删除**（Router 在调用前会丢弃过期行，见 §4.4） |
+| `discard_expired(key)` | 仅删除 `expires_at <= now` 的行（CAS 于时间，活行不动）；下一次请求按“无绑定”重新选号并生成新 upstream id |
 | `finish()` | 原子 `request_count+1` 并延长 TTL；释放会话锁和账号槽 |
 | `invalidate(key, reason)` | `state=invalid`，保留 account 与 upstream id，记录原因；幂等 |
 | `reset_upstream(key, reason)` | 保持账号，清空 upstream id，`state=active`，延长 TTL，记录原因；适配器必须重发完整历史 |
@@ -218,6 +219,7 @@ Client Session
   - `ResetUpstream`：同账号、新上游会话；完整历史重发；旧 ID 不保留。
   - `Rebind`：换账号；新账号必须 kind/region 匹配；upstream id 清空。
 - `acquire` 对 `invalid`/过期绑定返回 `SessionBindingInvalid`，并在消息中带 `invalid_reason`；行不会被删除，也不会被 `bind_if_absent` 静默替换。
+- `SessionRouter` 在 `acquire` 前处理过期：TTL 到期的绑定意味着上游会话已经死亡，没有可延续的状态，因此删除该行并按新会话重新选号、生成新的 upstream id。`invalid` 绑定不受此影响，仍需显式 `ResetUpstream`/`Rebind`。
 - 账号不可用：禁用 → `AccountDisabled`；认证过期 → `AuthExpired`；无效 → `AuthInvalid`；受限 → `ChannelRestricted`。绑定保持原账号，由 Scheduler 决定等待还是显式 rebind。
 
 ### 4.5 与未来 Scheduler 的边界
@@ -241,7 +243,7 @@ Client Session
 5. `rebind` 换账号并清空 upstream id；仓库级 stale CAS 失败。
 6. `invalidate` 保留账号与 upstream id、记录原因、阻断 `acquire`、幂等。
 7. `reset_upstream` 保留账号、清空 upstream id、恢复可获取。
-8. 过期绑定不会被 `bind_if_absent` 续期或替换，必须显式恢复。
+8. 过期绑定不会被 `bind_if_absent` 续期或替换；Router 会丢弃过期行并按新绑定重来，不再返回永久性 `session_binding_invalid`。
 9. 禁用账号 → `AccountDisabled`；认证失效 → `AuthInvalid`。
 10. 账号槽上限生效，释放后等待者被唤醒。
 11. 队列超时返回 `NoCapacity`。
