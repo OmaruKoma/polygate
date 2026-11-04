@@ -538,9 +538,16 @@ async fn checkins_body(state: &AdminState) -> Result<Value, GatewayError> {
             "account_name": account.name,
             "kind": account.kind.as_str(),
             "region": account.region.as_str(),
+            // Every kind with a registered executor. Intl variants still answer
+            // Unsupported at call time, but the kind itself is supported.
             "supported": matches!(
                 account.kind,
-                ProviderKind::Codearts | ProviderKind::Qoder | ProviderKind::Mock
+                ProviderKind::Codearts
+                    | ProviderKind::Qoder
+                    | ProviderKind::Workbuddy
+                    | ProviderKind::Officeace
+                    | ProviderKind::Trae
+                    | ProviderKind::Mock
             ),
             "last": latest.map(|run| json!({
                 "business_date": run.business_date,

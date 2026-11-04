@@ -5843,3 +5843,17 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 - 线上：清理 256 条过期绑定（备份 `polygate.db.bak-20261103-expired-sessions`），
   原始 curl 复测 200。
 - 777 passed；fmt/clippy 通过；0.2.8 四产物发布并部署到路由器。
+
+## 86. v0.2.9：签到归属澄清 + 管理台支持标记（2026-11-04）
+
+- 事实记录：线上 `checkin_schedules` 为空，网关从未创建自动签到排程；Qoder / WorkBuddy
+  （以及 CodeArts、OfficeAce）的签到记录都是管理员在控制台手工点按触发，上游回执为
+  `granted 100 credits`。文档此前把“每日签到”写成网关能力验证项，容易读成自动执行。
+- 文档：[README.md](file:///D:/codespace/POOL/README.md) 的“已用真实账号确认的项”改为
+  “签到（管理台手工触发）”，并注明没有自动排程；[docs/PROVIDERS.md](file:///D:/codespace/POOL/docs/PROVIDERS.md)
+  §9 Qoder CN / WorkBuddy CN 行同步，WorkBuddy 的“待管理台点击确认”改为已手工触发成功。
+- 修正：`/admin/api/checkins` 的 `supported` 只列了 Codearts/Qoder/Mock，漏了
+  Workbuddy/Officeace/Trae，签到管理页把 WorkBuddy 显示成“否”；现按已注册执行器的
+  kind 全量返回（[admin/api/mod.rs](file:///D:/codespace/POOL/src/admin/api/mod.rs)）。
+- 自动排程后端（`checkin_schedules`、`run_due`、每分钟 tick）保持原样，未启用、未加 UI。
+- 777 passed；fmt/clippy 通过；0.2.9 四产物发布并部署到路由器。

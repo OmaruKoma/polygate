@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/version-0.2.8-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.9-5bc4b5" alt="Version">
   <img src="https://img.shields.io/badge/tests-777%20passing-59bd91" alt="Tests">
   <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
 </p>
@@ -118,7 +118,10 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | 模型目录 | CodeArts CN（10）/Intl（2）、Qoder CN/Intl（11/15）、WorkBuddy CN/Intl（15/23）、Loomy（10）、OfficeAce（24） |
 | 对话（网关日志 200） | CodeArts CN、WorkBuddy CN（含 SSE）、Loomy |
 | 额度 | CodeArts CN、Qoder CN、Loomy、OfficeAce |
-| 每日签到 | Qoder CN/Intl（+100 credits）、WorkBuddy CN（+100 credits） |
+| 签到（管理台手工触发） | Qoder CN/Intl（+100 credits）、WorkBuddy CN（+100 credits） |
+
+签到没有自动排程：都由管理员在控制台对指定账号点按触发，表中 +100 credits 是当次上游回执；
+网关不会自行安排每日领取。
 
 CodeArts Intl 只暴露 `GLM-5.1`、`GLM-5.2` 两个模型（CN 同账号有 10 个），对话与 SSE 均已实测；
 签到被上游额度策略拒绝（`TM.00001005`），额度接口不返回 credit 总量，属于账号权益问题，

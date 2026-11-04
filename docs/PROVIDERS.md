@@ -168,11 +168,11 @@
 | Provider | 模型推理 | SSE | Tools | 原生会话恢复 | 额度 | Agent Task | 当前状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | CodeArts CN | 已实现（M13-B；Live Verified） | 已实现 | 已实现 | Unsupported（`chat_id` 仅缓存亲和） | 已实现（积分；未知保留） | Unsupported | experimental（Chat/额度/签到已实测；签到按 `USER_LOGIN` 活动动态取 id） |
-| Qoder CN | 已实现（COSY 签名；Live Verified） | 已实现（信封 SSE；Live Verified） | 已实现（tool_calls；Live Verified） | Unsupported（无 upstream session / 取消接口） | 已实现（积分；Live Verified） | 已实现（campaign；Live Verified 一次领取） | experimental（授权/模型/额度/Chat/SSE/工具/签到均已 Live Verified） |
+| Qoder CN | 已实现（COSY 签名；Live Verified） | 已实现（信封 SSE；Live Verified） | 已实现（tool_calls；Live Verified） | Unsupported（无 upstream session / 取消接口） | 已实现（积分；Live Verified） | 已实现（campaign；管理员手工触发，Live Verified） | experimental（授权/模型/额度/Chat/SSE/工具/签到均已 Live Verified；签到由管理台点按触发，无自动排程） |
 | Qoder Intl | 计划 | 计划 | 计划 | 计划 | 已实现（未实测） | Unsupported | unavailable（授权与签到未实测） |
 | TRAE CN | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-E，MockVerified） | Unsupported | experimental（授权/刷新/额度/签到均 MockVerified；无真实账号） |
 | TRAE Intl | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（订阅计划，数值 Unknown；M14-E） | Unsupported | unavailable（无真实账号；OAuth 主机未验证，登录/签到 Unsupported） |
-| WorkBuddy CN | 已实现（M14-B；模型发现 + Chat/SSE Live Verified 2026-10-30） | 已实现（真实账号发现 15 个模型） | 已实现（Chat 非流式与 SSE 均已实测；工具调用 MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-C，MockVerified，未点刷新实测） | Unsupported（growth/checkin 不是 Agent Task API） | experimental（授权/模型/Chat 已 Live Verified；额度刷新与签到待管理台点击确认） |
+| WorkBuddy CN | 已实现（M14-B；模型发现 + Chat/SSE Live Verified 2026-10-30） | 已实现（真实账号发现 15 个模型） | 已实现（Chat 非流式与 SSE 均已实测；工具调用 MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-C，MockVerified，未点刷新实测） | Unsupported（growth/checkin 不是 Agent Task API） | experimental（授权/模型/Chat 已 Live Verified；签到由管理台手工触发成功，+100 credits，无自动排程） |
 | WorkBuddy Intl | 已实现（MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（credits；M14-C，MockVerified） | Unsupported | unavailable（首条 system/会话头未适配；签到 Unsupported） |
 | Loomy CN | 已实现（会话导入；模型发现/Chat/SSE/额度 Live Verified 2026-10-30） | 已实现（真实账号 10 个 chat 模型） | 已实现（Live Verified；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified） | Unsupported（不做签到/领奖） | experimental（Chat/SSE/额度已实测；无 refresh，14 天需重导） |
 | OfficeAce CN | 已实现（M17；华为云 PKCE + DPoP 轮询） | 已实现（MockVerified） | 已实现（OpenAI 协议；MockVerified） | Unsupported（无原生会话） | 已实现（officeace_points 主账；MockVerified） | 已实现（每日 bonus claim；默认关闭，MockVerified） | experimental（无真实账号；V11/V4 签名已按参考向量逐字节比对） |
@@ -449,7 +449,8 @@ Coding2API 的适配行为：
 > `kind = "workbuddy" region = "cn"`，否则管理台会创建出“未注册 Provider”的账号，
 > 额度/签到按钮返回 `provider is not registered`。启用后启动时发现 15 个模型，
 > `POST /v1/chat/completions`（`workbuddy-cn::<model>`）非流式与 SSE 均返回 200 并带正确 content。
-> 额度刷新与签到未由自动化触发，仍按 MockVerified 记录。
+> 额度刷新未由自动化触发，仍按 MockVerified 记录；CN 签到已由管理员在管理台手工触发成功
+> （上游回执 +100 credits），没有自动排程。
 > 表格中“源码”表示参考实现的协议依据，“已实现”表示 PolyGate 的 Rust 适配器；
 > 两者都不等于真实上游可用。诚实头能否通过上游校验仍未验证，见
 > `docs/WORKBUDDY_MIGRATION.md` §14 与 `PROGRESS.md` §36.5。
