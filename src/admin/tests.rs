@@ -902,6 +902,94 @@ async fn unknown_quota_is_reported_as_unknown() {
 }
 
 #[tokio::test]
+async fn dashboard_sums_credits_per_provider_and_keeps_unknown_out() {
+    use crate::quota::{QuotaSnapshot, QuotaStatus, QuotaUnit};
+
+    let upstream = sts_server().await;
+    let harness = harness(&upstream.base_url, 600).await;
+    let (session, _) = setup(&harness.app).await;
+
+    let mut ids = Vec::new();
+    for name in ["codearts-a", "codearts-b", "qoder-a", "codearts-c"] {
+        let kind = if name.starts_with("qoder") {
+            ProviderKind::Qoder
+        } else {
+            ProviderKind::Codearts
+        };
+        let account = harness
+            .storage
+            .create_account(
+                &harness.secret_box,
+                &NewAccount {
+                    provider: if kind == ProviderKind::Qoder {
+                        "qoder-cn".into()
+                    } else {
+                        "codearts-cn".into()
+                    },
+                    kind,
+                    region: Some(Region::Cn),
+                    name: name.into(),
+                    credential: json!({"token": "stub"}),
+                    external_id: None,
+                    weight: 1,
+                    max_concurrency: 4,
+                    quota_group: None,
+                    enabled: true,
+                    metadata: json!({}),
+                },
+            )
+            .await
+            .expect("account");
+        ids.push(account.id);
+    }
+    for (id, remaining, total) in [
+        (ids[0].as_str(), 120.5, 200.0),
+        (ids[1].as_str(), 79.5, 100.0),
+        (ids[2].as_str(), 40.0, 50.0),
+    ] {
+        harness
+            .storage
+            .quota()
+            .save(&QuotaSnapshot {
+                account_id: id.to_string(),
+                group_id: None,
+                model: None,
+                unit: QuotaUnit::Credits,
+                total: Some(total),
+                remaining: Some(remaining),
+                status: QuotaStatus::Known,
+                error: None,
+                refreshed_at: chrono::Utc::now(),
+                raw: None,
+            })
+            .await
+            .expect("quota");
+    }
+
+    let (status, body) = authed_get(&harness.app, &session, "/admin/api/dashboard").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows = body["quota"]["by_provider"].as_array().expect("rows");
+    let codearts = rows
+        .iter()
+        .find(|row| row["kind"] == "codearts" && row["region"] == "cn")
+        .expect("codearts row");
+    assert_eq!(codearts["accounts"], 3);
+    assert_eq!(
+        codearts["unknown"], 1,
+        "an account without a snapshot is unknown"
+    );
+    assert_eq!(codearts["credits"]["remaining"], 200.0);
+    assert_eq!(codearts["credits"]["total"], 300.0);
+
+    let qoder = rows
+        .iter()
+        .find(|row| row["kind"] == "qoder")
+        .expect("qoder row");
+    assert_eq!(qoder["credits"]["remaining"], 40.0);
+    assert_eq!(body["quota"]["known"], 3);
+}
+
+#[tokio::test]
 async fn empty_dashboard_has_zero_counts_and_no_fake_data() {
     let upstream = sts_server().await;
     let harness = harness(&upstream.base_url, 600).await;

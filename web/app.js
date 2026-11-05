@@ -364,6 +364,10 @@
         ${statCard("24h 平均延迟", latency, "来自请求日志")}
         ${statCard("调度策略", strategyLabel(routing.strategy), "账号轮询与故障冷却", true)}
       </div>
+      <div class="card">
+        <div class="section-head"><h2>Provider 积分总和</h2><span class="muted">按最近一次额度快照汇总 · 未知不计入</span></div>
+        ${providerCreditsTable(data.quota?.by_provider || [])}
+      </div>
       <div class="grid two">
         <div class="card">
           <h2>最近签到</h2>
@@ -440,6 +444,49 @@
     return String(number);
   }
 
+  function formatCredits(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "—";
+    return number.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  function sumCredits(items) {
+    let remaining = 0;
+    let known = 0;
+    let unknown = 0;
+    for (const item of items || []) {
+      const quota = item.quota;
+      if (quota && quota.unit === "credits" && typeof quota.remaining === "number") {
+        remaining += quota.remaining;
+        known += 1;
+      } else {
+        unknown += 1;
+      }
+    }
+    return { remaining, known, unknown };
+  }
+
+  function providerCreditsTable(rows) {
+    if (!rows.length) {
+      return `<div class="empty"><strong>暂无额度数据</strong>刷新账号额度后这里会按 Provider 汇总。</div>`;
+    }
+    return `<div class="table-wrap"><table>
+      <thead><tr><th>Provider</th><th>区域</th><th>账号</th><th>剩余积分</th><th>总额</th><th>未知</th></tr></thead>
+      <tbody>${rows
+        .map(
+          (row) => `<tr>
+            <td><span class="strong">${esc(row.kind)}</span></td>
+            <td>${regionLabel(row.region)}</td>
+            <td>${row.accounts}</td>
+            <td>${row.credits ? formatCredits(row.credits.remaining) : '<span class="badge muted">未知</span>'}</td>
+            <td>${row.credits && row.credits.total !== null ? formatCredits(row.credits.total) : "—"}</td>
+            <td>${row.unknown}</td>
+          </tr>`,
+        )
+        .join("")}
+      </tbody></table></div>`;
+  }
+
   // ---------------------------------------------------------------- accounts
 
   async function renderAccounts(container) {
@@ -448,6 +495,7 @@
     const data = await api(
       `/admin/api/accounts?kind=${encodeURIComponent(state.provider)}&region=${encodeURIComponent(region)}`,
     );
+    const credits = sumCredits(data.items);
     container.innerHTML = `
       <div class="section-head">
         <div class="filters">
@@ -455,7 +503,9 @@
             <button data-region="cn" class="${region === "cn" ? "active" : ""}">CN 中国站</button>
             <button data-region="intl" class="${region === "intl" ? "active" : ""}">Intl 国际站</button>
           </div>
-          <span class="muted">${provider.label} · ${data.count} 个账号</span>
+          <span class="muted">${provider.label} · ${data.count} 个账号${
+            credits.known ? ` · 剩余合计 ${formatCredits(credits.remaining)}` : ""
+          }${credits.unknown ? ` · ${credits.unknown} 个未知` : ""}</span>
         </div>
         <button class="btn primary" id="add-account">添加账号</button>
       </div>

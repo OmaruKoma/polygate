@@ -29,6 +29,16 @@ pub async fn dashboard(State(state): State<AdminState>) -> Response {
     }
 }
 
+#[derive(Default)]
+struct ProviderCredits {
+    accounts: usize,
+    unknown: usize,
+    remaining: f64,
+    total: f64,
+    has_credits: bool,
+    has_total: bool,
+}
+
 async fn dashboard_body(state: &AdminState) -> Result<Value, GatewayError> {
     let accounts = state.accounts.list().await?;
     let mut enabled = 0usize;
@@ -52,17 +62,63 @@ async fn dashboard_body(state: &AdminState) -> Result<Value, GatewayError> {
 
     let mut quota_known = 0usize;
     let mut quota_unknown = 0usize;
+    // Credits per (provider kind, region). Unknown stays unknown: an account
+    // without a numeric credit balance is counted, never summed as zero.
+    let mut credit_totals: std::collections::BTreeMap<(String, String), ProviderCredits> =
+        std::collections::BTreeMap::new();
     for account in &accounts {
-        match state
+        let snapshot = state
             .storage
             .quota()
             .latest_for_account(&account.id)
-            .await?
-        {
-            Some(snapshot) if snapshot.remaining.is_some() => quota_known += 1,
-            _ => quota_unknown += 1,
+            .await?;
+        let known = snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.remaining.is_some());
+        if known {
+            quota_known += 1;
+        } else {
+            quota_unknown += 1;
+        }
+
+        let entry = credit_totals
+            .entry((
+                account.kind.as_str().to_string(),
+                account.region.as_str().to_string(),
+            ))
+            .or_default();
+        entry.accounts += 1;
+        if !known {
+            entry.unknown += 1;
+        }
+        if let Some(snapshot) = snapshot {
+            if snapshot.unit == crate::quota::QuotaUnit::Credits {
+                entry.has_credits = true;
+                if let Some(remaining) = snapshot.remaining {
+                    entry.remaining += remaining;
+                }
+                if let Some(total) = snapshot.total {
+                    entry.total += total;
+                    entry.has_total = true;
+                }
+            }
         }
     }
+    let provider_credits: Vec<Value> = credit_totals
+        .into_iter()
+        .map(|((kind, region), totals)| {
+            json!({
+                "kind": kind,
+                "region": region,
+                "accounts": totals.accounts,
+                "unknown": totals.unknown,
+                "credits": totals.has_credits.then(|| json!({
+                    "remaining": totals.remaining,
+                    "total": totals.has_total.then_some(totals.total),
+                })),
+            })
+        })
+        .collect();
 
     let usage = state.storage.usage().summary(None).await?;
     let recent_usage = state.storage.usage().list_recent(5).await?;
@@ -157,6 +213,7 @@ async fn dashboard_body(state: &AdminState) -> Result<Value, GatewayError> {
         "quota": {
             "known": quota_known,
             "unknown": quota_unknown,
+            "by_provider": provider_credits,
         },
         "requests": {
             "total": usage.requests,

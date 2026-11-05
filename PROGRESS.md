@@ -5891,3 +5891,16 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 `qoder intl` 主账号 `succeeded — checked in; Qoder granted 100 credits`（attempt 1）；
 同一自然人的第二个 Intl 账号随后为 `unsupported`（同日同人已领，上游不再下发活动，属预期）。
 验证用的一次性 `checkin_schedules` 已删除，网关仍无自动排程。
+
+## 89. v0.2.12：仪表盘按 Provider 汇总积分（2026-11-05）
+
+- `/admin/api/dashboard` 的 `quota` 新增 `by_provider`：
+  `[{kind, region, accounts, unknown, credits: {remaining, total} | null}]`。
+  只累加最近一次额度快照中 `unit = credits` 且数值已知的账号；没有快照或数值未知的账号
+  只计入 `unknown`，不会被当成 0；`total` 在所有账号都没有总额时保持 `null`。
+- Web：[web/app.js](file:///D:/codespace/POOL/web/app.js) 仪表盘新增「Provider 积分总和」表格
+  （剩余 / 总额 / 未知）；账号管理页头部也显示当前 Provider+区域的剩余合计与未知数。
+- 测试：`dashboard_sums_credits_per_provider_and_keeps_unknown_out`
+  （CodeArts CN 两账号合计 200/300，无快照账号计 unknown=1；Qoder CN 单独一行）。
+  781 passed；fmt/clippy 通过。
+- 0.2.12 四产物发布并部署到路由器。
