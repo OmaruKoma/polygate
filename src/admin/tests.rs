@@ -1574,6 +1574,77 @@ async fn account_checkin_endpoint_runs_once_per_day_and_requires_csrf() {
     assert_eq!(status, StatusCode::FORBIDDEN, "CSRF must be required");
 }
 
+#[tokio::test]
+async fn bulk_checkin_endpoint_runs_every_ready_account_once() {
+    let upstream = sts_server().await;
+    let harness = harness(&upstream.base_url, 600).await;
+    let (session, _) = setup(&harness.app).await;
+
+    for name in ["first", "second"] {
+        harness
+            .storage
+            .create_account(
+                &harness.secret_box,
+                &NewAccount {
+                    provider: "qoder-cn".into(),
+                    kind: ProviderKind::Qoder,
+                    region: Some(Region::Cn),
+                    name: name.to_string(),
+                    credential: json!({"access_token": "dt-access", "uid": name}),
+                    external_id: Some(format!("qoder:cn:uid-{name}")),
+                    weight: 1,
+                    max_concurrency: 4,
+                    quota_group: None,
+                    enabled: true,
+                    metadata: json!({}),
+                },
+            )
+            .await
+            .expect("account");
+    }
+
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        "/admin/api/checkins",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["count"], 2);
+    for item in body["items"].as_array().expect("items") {
+        assert_eq!(item["status"], "succeeded", "{item}");
+    }
+
+    // A repeated click the same day replays the stored result, never a second claim.
+    let (status, again) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        "/admin/api/checkins",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["count"], 2);
+    for item in again["items"].as_array().expect("items") {
+        assert_eq!(item["replayed"], true, "{item}");
+    }
+
+    let headers = vec![("cookie", session.cookie.clone())];
+    let (status, _, _) = send(
+        &harness.app,
+        Method::POST,
+        "/admin/api/checkins",
+        headers,
+        None,
+        peer_loopback(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "CSRF must be required");
+}
+
 // ---------------------------------------------------------------------------
 // WorkBuddy device authorization
 // ---------------------------------------------------------------------------

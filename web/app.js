@@ -296,7 +296,7 @@
     dashboard: ["仪表盘", "账号、额度与运行状态"],
     accounts: ["账号管理", "Provider 账号授权与状态"],
     models: ["模型管理", "原生模型目录、别名与多目标路由"],
-    checkins: ["签到管理", "M12 签到记录（只读）"],
+    checkins: ["签到管理", "签到记录与一键签到"],
     usage: ["用量统计", "已记录的下游请求"],
     logs: ["请求日志", "请求元数据与清理策略（不含提示词与凭据）"],
     settings: ["系统设置", "实例与安全信息"],
@@ -1241,7 +1241,14 @@
   async function renderCheckins(container) {
     const data = await api("/admin/api/checkins");
     container.innerHTML = `
-      <p class="muted">本页面只读展示签到记录；单个账号的签到现在“账号管理 → 详情 → 执行签到”中触发，每个账号每天最多执行一次。</p>
+      <div class="section-head">
+        <div>
+          <h2>签到记录</h2>
+          <p class="muted">「一键签到」会为所有启用且已授权的账号各执行一次，当天已签到的按已签处理；
+            单个账号也可以在「账号管理 → 详情 → 执行签到」中触发。</p>
+        </div>
+        <button class="btn primary" id="run-all-checkins">一键签到</button>
+      </div>
       ${data.items.length
         ? `<div class="table-wrap"><table><thead><tr><th>账号</th><th>Provider</th><th>支持签到</th><th>最近签到</th><th>结果</th><th>时间</th></tr></thead><tbody>
           ${data.items
@@ -1258,6 +1265,31 @@
             .join("")}
         </tbody></table></div>`
         : `<div class="empty"><strong>暂无账号</strong>添加账号后才能展示签到记录。</div>`}`;
+
+    $("#run-all-checkins")?.addEventListener("click", (event) => runAllCheckins(event.currentTarget));
+  }
+
+  async function runAllCheckins(button) {
+    button.disabled = true;
+    button.textContent = "签到中…";
+    toast("正在为所有已授权账号执行签到…");
+    try {
+      const result = await api("/admin/api/checkins", { method: "POST" });
+      const counts = new Map();
+      for (const item of result.items || []) {
+        counts.set(item.status, (counts.get(item.status) || 0) + 1);
+      }
+      const parts = [...counts].map(([status, count]) => `${checkinStatus(status).label} ${count}`);
+      toast(
+        result.count ? `已处理 ${result.count} 个账号：${parts.join(" · ")}` : "没有可签到的账号",
+        counts.has("failed") ? "error" : "ok",
+      );
+      renderRoute();
+    } catch (error) {
+      toast(error.message, "error");
+      button.disabled = false;
+      button.textContent = "一键签到";
+    }
   }
 
   async function renderUsage(container) {

@@ -562,6 +562,33 @@ async fn checkins_body(state: &AdminState) -> Result<Value, GatewayError> {
     Ok(json!({"items": items}))
 }
 
+/// One-click check-in: run every enabled, dispatchable account that has a
+/// stored credential. Accounts are claimed individually by the service, so a
+/// repeated click the same day reports `replayed` instead of claiming twice.
+pub async fn run_all_checkins(State(state): State<AdminState>) -> Response {
+    match state.checkin.checkin_all().await {
+        Ok(results) => {
+            let items: Vec<Value> = results
+                .into_iter()
+                .map(|result| {
+                    json!({
+                        "account_id": result.account_id,
+                        "business_date": result.business_date,
+                        "status": result.status.as_str(),
+                        "summary": result.summary,
+                        "replayed": result.replayed,
+                        "attempt_count": result.attempt_count,
+                        "error_category": result.error_category.map(|value| value.as_str()),
+                        "quota_refresh": result.quota_refresh,
+                    })
+                })
+                .collect();
+            json_ok(json!({"count": items.len(), "items": items}))
+        }
+        Err(error) => json_error(&error),
+    }
+}
+
 pub async fn usage(State(state): State<AdminState>) -> Response {
     match usage_body(&state).await {
         Ok(body) => json_ok(body),

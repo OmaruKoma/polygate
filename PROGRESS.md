@@ -5857,3 +5857,15 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   kind 全量返回（[admin/api/mod.rs](file:///D:/codespace/POOL/src/admin/api/mod.rs)）。
 - 自动排程后端（`checkin_schedules`、`run_due`、每分钟 tick）保持原样，未启用、未加 UI。
 - 777 passed；fmt/clippy 通过；0.2.9 四产物发布并部署到路由器。
+
+## 87. v0.2.10：签到管理页一键签到（2026-11-04）
+
+- 新增 `POST /admin/api/checkins`（[admin/api/mod.rs](file:///D:/codespace/POOL/src/admin/api/mod.rs)）：
+  调用已有的 `CheckinService::checkin_all()`，对每个启用、可调度且存有凭据的账号执行一次；
+  返回 `{count, items:[{account_id, business_date, status, summary, replayed, attempt_count,
+  error_category, quota_refresh}]}`。同日重复点击由服务层返回 `replayed=true`，不会重复领取。
+- Web：[web/app.js](file:///D:/codespace/POOL/web/app.js) 签到管理页新增「一键签到」按钮，
+  执行后 toast 汇总各状态数量并刷新表格；仍属管理员手工触发，没有自动排程。
+- 测试：`bulk_checkin_endpoint_runs_every_ready_account_once`（两个账号一次成功、
+  二次 replayed、缺 CSRF 403）。778 passed；fmt/clippy 通过。
+- 0.2.10 四产物发布并部署到路由器。

@@ -296,7 +296,10 @@ pub fn router(state: AdminState) -> Router {
         .route("/admin/api/scheduler", get(api::scheduler))
         .route("/admin/api/logs", get(api::request_logs))
         .route("/admin/api/logs/purge", post(api::purge_request_logs))
-        .route("/admin/api/checkins", get(api::checkins))
+        .route(
+            "/admin/api/checkins",
+            get(api::checkins).post(api::run_all_checkins),
+        )
         .route("/admin/api/usage", get(api::usage))
         .route(
             "/admin/api/accounts",
