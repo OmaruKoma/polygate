@@ -154,6 +154,14 @@ name = "Mock (development)"
 #
 #   [providers.options]
 #   "checkin.claim_enabled" = "true"  # default false: status only, no claims
+#   # Intl only lists the daily +100 credits when the campaign request carries
+#   # Qoder's native device identity (a synthetic per-uid identity is not
+#   # accepted). Take machineToken/machineType from the Qoder install's own
+#   # helper and paste them here; PolyGate never generates them:
+#   #   %LOCALAPPDATA%\Programs\Qoder\resources\umid\runtime-info.exe
+#   #   C:\Program Files\Qoder\resources\umid\runtime-info.exe  (machine-wide)
+#   # "qoder.machine_token" = "<machineToken>"
+#   # "qoder.machine_type"  = "<machineType>"
 #
 # [[providers]]
 # kind = "workbuddy"

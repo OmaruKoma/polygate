@@ -5,8 +5,8 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5bc4b5" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/version-0.2.10-5bc4b5" alt="Version">
-  <img src="https://img.shields.io/badge/tests-778%20passing-59bd91" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.2.11-5bc4b5" alt="Version">
+  <img src="https://img.shields.io/badge/tests-780%20passing-59bd91" alt="Tests">
   <img src="https://img.shields.io/badge/providers-9-5bc4b5" alt="Providers">
 </p>
 
@@ -390,6 +390,9 @@ verification = "verified"          # 控制台徽标：verified / experimental /
 - **TRAE 尚无真实账号**：协议、刷新、额度与签到只经过 Mock 验证，状态保持 MockVerified。
 - **Intl 的部分能力受上游影响**：CodeArts Intl 的签到会被上游额度策略拒绝，Qoder Intl 的额度
   可能仍是 `unknown`，WorkBuddy Intl 的签到为 `Unsupported`。
+- **Qoder Intl 签到需要原生设备身份**：上游只向携带 Qoder 客户端设备身份的请求下发每日
+  100 credits 活动。把安装目录里 `resources/umid/runtime-info.exe` 输出的 `machineToken` /
+  `machineType` 写进 `qoder.machine_token` / `qoder.machine_type`；网关不生成这两项。
 
 ## 文档
 

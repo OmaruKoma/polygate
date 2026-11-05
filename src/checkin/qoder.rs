@@ -69,6 +69,11 @@ const CAMPAIGN_CLIENT_TYPE: &str = "10";
 pub struct QoderCheckinExecutor {
     api: QoderApi,
     claim_enabled: bool,
+    /// Native device identity from Qoder's own `runtime-info` helper, supplied
+    /// by the operator. The Intl campaign family only lists the daily reward
+    /// when the request carries it; a synthetic per-uid identity does not work
+    /// (and hides the CN campaign too).
+    machine: Option<(String, String)>,
 }
 
 impl QoderCheckinExecutor {
@@ -76,7 +81,32 @@ impl QoderCheckinExecutor {
         Self {
             api: QoderApi::new(client, region),
             claim_enabled,
+            machine: None,
         }
+    }
+
+    /// Operator-provided `machineToken` / `machineType` from the Qoder
+    /// `runtime-info` helper. Never generated here.
+    pub fn with_machine_identity(
+        mut self,
+        token: impl Into<String>,
+        machine_type: impl Into<String>,
+    ) -> Self {
+        let token = token.into().trim().to_string();
+        let machine_type = machine_type.into().trim().to_string();
+        if !token.is_empty() && !machine_type.is_empty() {
+            self.machine = Some((token, machine_type));
+        }
+        self
+    }
+
+    fn campaign_headers(&self) -> Vec<(&'static str, String)> {
+        let mut headers = vec![("cosy-clienttype", CAMPAIGN_CLIENT_TYPE.to_string())];
+        if let Some((token, machine_type)) = &self.machine {
+            headers.push(("cosy-machinetoken", token.clone()));
+            headers.push(("cosy-machinetype", machine_type.clone()));
+        }
+        headers
     }
 
     /// Tests only.
@@ -89,6 +119,7 @@ impl QoderCheckinExecutor {
         Self {
             api: QoderApi::with_base(client, region, base),
             claim_enabled,
+            machine: None,
         }
     }
 
@@ -110,13 +141,11 @@ impl QoderCheckinExecutor {
     }
 
     async fn campaigns(&self, credential: &QoderCredential) -> Result<Value, GatewayError> {
+        let extra = self.campaign_headers();
+        let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
         match self
             .api
-            .get_with_headers(
-                region::CAMPAIGNS_PATH,
-                credential,
-                &[("cosy-clienttype", CAMPAIGN_CLIENT_TYPE)],
-            )
+            .get_with_headers(region::CAMPAIGNS_PATH, credential, &extra)
             .await
         {
             Ok(payload) => Ok(payload),
@@ -135,13 +164,15 @@ impl QoderCheckinExecutor {
         // Validates the id before it is interpolated into the path.
         region::realm(credential.realm).campaign_claim_url(campaign_id)?;
         let path = region::CAMPAIGN_CLAIM_PATH.replace("{campaign_id}", campaign_id);
+        let extra = self.campaign_headers();
+        let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
         match self
             .api
             .post_with_headers(
                 &path,
                 &Value::Object(Default::default()),
                 credential,
-                &[("cosy-clienttype", CAMPAIGN_CLIENT_TYPE)],
+                &extra,
             )
             .await
         {
@@ -445,6 +476,64 @@ mod tests {
             .expect("claim posted");
         assert_eq!(claim.header("authorization"), Some("Bearer dt-access"));
         assert_eq!(claim.body.trim(), "{}");
+    }
+
+    #[tokio::test]
+    async fn machine_identity_is_sent_on_campaigns_and_claim() {
+        let server = spawn_server(|request| match (request.method.as_str(), request.path()) {
+            ("GET", "/sash/api/v1/me/campaigns") => Reply::json(200, campaigns()),
+            ("POST", "/sash/api/v1/me/campaigns/c-2/claim") => Reply::json(
+                200,
+                json!({"status": "SUCCESS", "benefit": {"amount": 100}}).to_string(),
+            ),
+            _ => Reply::json(404, "{}"),
+        })
+        .await;
+        let executor = QoderCheckinExecutor::with_base(
+            Region::Intl,
+            true,
+            reqwest::Client::new(),
+            &server.base_url,
+        )
+        .with_machine_identity("native-token", "native-type");
+        let outcome = executor
+            .checkin(&request(), &context(Region::Intl))
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, CheckinOutcome::Succeeded { .. }),
+            "{outcome:?}"
+        );
+        let requests = server.requests();
+        assert!(!requests.is_empty());
+        for request in requests {
+            assert_eq!(request.header("cosy-clienttype"), Some("10"));
+            assert_eq!(request.header("cosy-machinetoken"), Some("native-token"));
+            assert_eq!(request.header("cosy-machinetype"), Some("native-type"));
+        }
+    }
+
+    #[tokio::test]
+    async fn without_machine_identity_only_the_client_type_is_sent() {
+        let server = spawn_server(|request| match request.path() {
+            "/sash/api/v1/me/campaigns" => Reply::json(200, campaigns()),
+            _ => Reply::json(404, "{}"),
+        })
+        .await;
+        let executor = QoderCheckinExecutor::with_base(
+            Region::Intl,
+            false,
+            reqwest::Client::new(),
+            &server.base_url,
+        );
+        let _ = executor.checkin(&request(), &context(Region::Intl)).await;
+        let requests = server.requests();
+        assert!(!requests.is_empty());
+        for request in requests {
+            assert_eq!(request.header("cosy-clienttype"), Some("10"));
+            assert_eq!(request.header("cosy-machinetoken"), None);
+            assert_eq!(request.header("cosy-machinetype"), None);
+        }
     }
 
     #[tokio::test]

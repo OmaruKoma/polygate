@@ -5869,3 +5869,25 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 - 测试：`bulk_checkin_endpoint_runs_every_ready_account_once`（两个账号一次成功、
   二次 replayed、缺 CSRF 403）。778 passed；fmt/clippy 通过。
 - 0.2.10 四产物发布并部署到路由器。
+
+## 88. v0.2.11：Qoder Intl 签到需要原生设备身份（2026-11-05）
+
+- 现象：Intl 账号在管理台签到返回 Unsupported（"Qoder did not target this account with a
+  daily check-in campaign"），但同一账号的 Qoder 桌面端有签到入口。
+- 实测（本机 `runtime-info.exe` + 真实令牌，只读 `GET /sash/api/v1/me/campaigns`）：
+  - 只带 `cosy-clienttype: 10` → 只返回全局 `VIEW_DETAILS`，没有 `CLAIM_BENEFIT`；
+  - 追加 `machineToken` / `machineType`（`cosy-machinetoken` / `cosy-machinetype`）→
+    立即出现 `CLAIM_BENEFIT` +100 credits（CN、Intl 都可见）；
+  - PolyGate 自行派生的合成身份**无效**，加在 CN 上反而会让每日活动消失。
+- 修复：[checkin/qoder.rs](file:///D:/codespace/POOL/src/checkin/qoder.rs) 新增
+  `with_machine_identity`，campaign 查询与 claim 都带原生设备头；
+  [runtime/mod.rs](file:///D:/codespace/POOL/src/runtime/mod.rs) 读取
+  `qoder.machine_token` / `qoder.machine_type`（运维从 Qoder 安装目录的
+  `resources/umid/runtime-info.exe` 取得，网关不生成、不伪造）。
+- 已用路由器真实账号验证（见下方结果）。
+- 780 passed；fmt/clippy 通过。
+
+验证结果（路由器，2026-11-05T02:52Z，真实账号）：
+`qoder intl` 主账号 `succeeded — checked in; Qoder granted 100 credits`（attempt 1）；
+同一自然人的第二个 Intl 账号随后为 `unsupported`（同日同人已领，上游不再下发活动，属预期）。
+验证用的一次性 `checkin_schedules` 已删除，网关仍无自动排程。

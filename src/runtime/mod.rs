@@ -482,18 +482,21 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                 // though the status query itself is read-only.
                 let claim_enabled = option(provider, "checkin.claim_enabled")
                     .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-                routing = routing.with(
-                    ProviderKind::Qoder,
+                // Intl only lists the daily reward for the native device
+                // identity; the values come from Qoder's own runtime-info
+                // helper and are supplied by the operator.
+                let machine = option(provider, "qoder.machine_token")
+                    .zip(option(provider, "qoder.machine_type"));
+                let mut executor = QoderCheckinExecutor::new(
                     provider.region,
-                    Arc::new(
-                        QoderCheckinExecutor::new(
-                            provider.region,
-                            claim_enabled,
-                            reqwest::Client::new(),
-                        )
-                        .with_identity(identity(provider)?),
-                    ),
-                );
+                    claim_enabled,
+                    reqwest::Client::new(),
+                )
+                .with_identity(identity(provider)?);
+                if let Some((token, machine_type)) = machine {
+                    executor = executor.with_machine_identity(token, machine_type);
+                }
+                routing = routing.with(ProviderKind::Qoder, provider.region, Arc::new(executor));
             }
             ProviderKind::Workbuddy => {
                 // CN only in practice; the executor itself reports `Unsupported`

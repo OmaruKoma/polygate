@@ -63,6 +63,12 @@
   只领取 `actionType=CLAIM_BENEFIT && claimStatus=CLAIMABLE`；claim 响应 `replayed:true` 表示重复领取。
   Intl 抓包（`qoder-intel.trace`，桌面端 0.5.1，2026-11-01）：每日 100 credits，**10:00（UTC+8）刷新**，
   领取后 30 天有效；桌面端 claim 用空 body，`{}` 同样被接受。
+- **Intl 需要原生设备身份（2026-11-05 实测）**：只带 `cosy-clienttype: 10` 时，两个 Intl 账号都只返回
+  全局 `VIEW_DETAILS`，没有每日 `CLAIM_BENEFIT`；加上 Qoder 自带 `runtime-info` 输出的
+  `machineToken` / `machineType`（`cosy-machinetoken` / `cosy-machinetype`）后立即出现
+  100 credits 活动。自行派生的合成身份**无效**，而且会让 CN 的每日活动也消失。
+  因此这两个值必须由运维从已安装的 Qoder 客户端取（见 `config.example.toml` 的
+  `qoder.machine_token` / `qoder.machine_type`），网关不生成、不伪造。
 - **中国移动联名（CN，`china_mobile` / `cmcc`）**：没有独立客户端，联名能力编在同一份
   Qoder CN 包内，靠「合作方方案 + 外部模型渠道」两级开关激活。授权走 openapi
   （`GET /api/v1/me/partner_plans?partner_codes=china_mobile`、
@@ -169,7 +175,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | CodeArts CN | 已实现（M13-B；Live Verified） | 已实现 | 已实现 | Unsupported（`chat_id` 仅缓存亲和） | 已实现（积分；未知保留） | Unsupported | experimental（Chat/额度/签到已实测；签到按 `USER_LOGIN` 活动动态取 id） |
 | Qoder CN | 已实现（COSY 签名；Live Verified） | 已实现（信封 SSE；Live Verified） | 已实现（tool_calls；Live Verified） | Unsupported（无 upstream session / 取消接口） | 已实现（积分；Live Verified） | 已实现（campaign；管理员手工触发，Live Verified） | experimental（授权/模型/额度/Chat/SSE/工具/签到均已 Live Verified；签到由管理台点按触发，无自动排程） |
-| Qoder Intl | 计划 | 计划 | 计划 | 计划 | 已实现（未实测） | Unsupported | unavailable（授权与签到未实测） |
+| Qoder Intl | 计划 | 计划 | 计划 | 计划 | 已实现（未实测） | 已实现（campaign；需运维提供 runtime-info 设备身份） | experimental（签到已在真实账号上确认出现 100 credits 活动） |
 | TRAE CN | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-E，MockVerified） | Unsupported | experimental（授权/刷新/额度/签到均 MockVerified；无真实账号） |
 | TRAE Intl | 已实现（M14-D；MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（订阅计划，数值 Unknown；M14-E） | Unsupported | unavailable（无真实账号；OAuth 主机未验证，登录/签到 Unsupported） |
 | WorkBuddy CN | 已实现（M14-B；模型发现 + Chat/SSE Live Verified 2026-10-30） | 已实现（真实账号发现 15 个模型） | 已实现（Chat 非流式与 SSE 均已实测；工具调用 MockVerified） | Unsupported（无 upstream session） | 已实现（credits；M14-C，MockVerified，未点刷新实测） | Unsupported（growth/checkin 不是 Agent Task API） | experimental（授权/模型/Chat 已 Live Verified；签到由管理台手工触发成功，+100 credits，无自动排程） |
