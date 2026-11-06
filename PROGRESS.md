@@ -5919,3 +5919,19 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   - [providers/officeace/http.rs](file:///D:/codespace/POOL/src/providers/officeace/http.rs)
     的 `classify_transport` 区分连接失败 / 响应中断 / 请求未发出，便于下次定位。
 - 781 passed；fmt/clippy 通过；0.2.13 四产物发布并部署到路由器。
+
+## 91. v0.2.14：OfficeAce 传输失败先确认再安全重试（2026-11-06）
+
+- 追问「OfficeAce request failed 结果是」：用同一批凭据做只读订阅查询（`GET /v1/subscription`）：
+  - `hid_kts-ye2dcfz269u`、`hsggga`：`daily: none listed`，`total = 4500`（只有新人 4500，**没有**当日 +100）；
+  - `hw066996042513246`：`每日签到有礼 claimed=true credit=100`，`total = 4600`。
+  结论：那两个 10.5s 的传输失败确实没有领到；`unknown` 是"不知道"，不是"成功"。
+- 补救：对两个 `daily` 缺失的账号调用 `POST /v1/subscription/bonus/claim`（按天幂等），均被接受，
+  随后查询显示 `claimed=true, credit=100`。控制台里那两条历史 `unknown` 记录点「确认结果」
+  即可落到"今日已签"（只查状态，不会重复领取）。
+- 代码修复：[checkin/officeace.rs](file:///D:/codespace/POOL/src/checkin/officeace.rs) 在 claim 返回
+  `Timeout` / `Transport` / `UpstreamServer` 时，先读订阅：已到账则按成功处理，未到账则安全重试一次
+  （每日领取幂等，且已确认前一次没有落账）。
+- 测试：`an_ambiguous_claim_that_did_not_land_is_retried_once`、
+  `an_ambiguous_claim_that_landed_is_not_repeated`。783 passed；fmt/clippy 通过。
+- 0.2.14 四产物发布并部署到路由器。

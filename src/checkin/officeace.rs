@@ -136,7 +136,23 @@ impl CheckinExecutor for OfficeAceCheckinExecutor {
             });
         }
 
-        let payload = self.http.claim_bonus(&credential, now).await?;
+        let payload = match self.http.claim_bonus(&credential, now).await {
+            Ok(payload) => payload,
+            Err(error) if ambiguous_claim_failure(&error) => {
+                // The claim is idempotent for the day, but a blind retry could
+                // double count. Ask first: no daily grant means nothing was
+                // applied, so exactly one retry is safe.
+                let probe = self.http.get_subscription(&credential, Utc::now()).await?;
+                if subscription::daily_activity(&probe, Utc::now())
+                    .is_some_and(|activity| activity.claimed)
+                {
+                    probe
+                } else {
+                    self.http.claim_bonus(&credential, Utc::now()).await?
+                }
+            }
+            Err(error) => return Err(error),
+        };
         let after = subscription::bonus_remaining(&payload);
         let gained: f64 = after
             .iter()
@@ -163,9 +179,21 @@ impl CheckinExecutor for OfficeAceCheckinExecutor {
     }
 }
 
+/// A claim whose answer was lost may or may not have been applied upstream.
+fn ambiguous_claim_failure(error: &GatewayError) -> bool {
+    matches!(
+        error.kind,
+        crate::error::ErrorKind::Timeout
+            | crate::error::ErrorKind::Transport
+            | crate::error::ErrorKind::UpstreamServer
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
     use crate::accounts::Credential;
     use crate::config::Region;
     use crate::error::ErrorKind;
@@ -201,6 +229,20 @@ mod tests {
             "model_app_secret": "secret",
             "model_base_url": "http://gateway.invalid",
         })));
+        context
+    }
+
+    /// A context whose gateway points at the mock server.
+    fn context_at(base: &str) -> AuthorizationContext {
+        let mut context = context();
+        let mut value = context
+            .credential
+            .take()
+            .expect("credential")
+            .to_json()
+            .clone();
+        value["model_base_url"] = json!(base);
+        context.credential = Some(Credential::from_value(value));
         context
     }
 
@@ -281,6 +323,92 @@ mod tests {
             .unwrap_or_default()
             .starts_with("V11-HMAC-SHA256 Credential=sts-ak/"));
         assert_eq!(claim.header("x-subscription-type"), Some("v2"));
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_claim_that_did_not_land_is_retried_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let claims = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&claims);
+        let before = subscription_with(0.0, "");
+        let after = subscription_with(1000.0, "2026-10-30T01:00:00Z");
+        let server = spawn_server(move |request| match request.path() {
+            "/v1/subscription/bonus/claim" => {
+                let attempt = counter.fetch_add(1, Ordering::SeqCst);
+                if attempt == 0 {
+                    Reply::json(503, "{}")
+                } else {
+                    Reply::json(200, after.clone())
+                }
+            }
+            "/v1/subscription" => Reply::json(200, before.clone()),
+            _ => Reply::json(404, "{}"),
+        })
+        .await;
+        let executor = OfficeAceCheckinExecutor::new(
+            "http://cloud.invalid",
+            "http://cloud.invalid",
+            true,
+            reqwest::Client::new(),
+        );
+
+        let outcome = executor
+            .checkin(&request(), &context_at(&server.base_url))
+            .await
+            .expect("checkin");
+        assert!(
+            matches!(outcome, CheckinOutcome::Succeeded { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(claims.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_claim_that_landed_is_not_repeated() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&reads);
+        let claims = Arc::new(AtomicUsize::new(0));
+        let claim_counter = Arc::clone(&claims);
+        let before = subscription_with(0.0, "");
+        // "Landed" means the grant is effective today, so the probe sees it.
+        let landed = subscription_with(1000.0, &chrono::Utc::now().to_rfc3339());
+        let server = spawn_server(move |request| match request.path() {
+            "/v1/subscription/bonus/claim" => {
+                claim_counter.fetch_add(1, Ordering::SeqCst);
+                Reply::json(503, "{}")
+            }
+            "/v1/subscription" => {
+                // First read is the baseline; every later read sees the grant.
+                let read = counter.fetch_add(1, Ordering::SeqCst);
+                if read == 0 {
+                    Reply::json(200, before.clone())
+                } else {
+                    Reply::json(200, landed.clone())
+                }
+            }
+            _ => Reply::json(404, "{}"),
+        })
+        .await;
+        let executor = OfficeAceCheckinExecutor::new(
+            "http://cloud.invalid",
+            "http://cloud.invalid",
+            true,
+            reqwest::Client::new(),
+        );
+
+        let outcome = executor
+            .checkin(&request(), &context_at(&server.base_url))
+            .await
+            .expect("checkin");
+        assert!(
+            matches!(
+                outcome,
+                CheckinOutcome::Succeeded { .. } | CheckinOutcome::AlreadyCheckedIn { .. }
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(claims.load(Ordering::SeqCst), 1, "no blind second claim");
     }
 
     #[tokio::test]
