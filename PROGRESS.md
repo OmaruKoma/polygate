@@ -5935,3 +5935,29 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 - 测试：`an_ambiguous_claim_that_did_not_land_is_retried_once`、
   `an_ambiguous_claim_that_landed_is_not_repeated`。783 passed；fmt/clippy 通过。
 - 0.2.14 四产物发布并部署到路由器。
+
+## 92. v0.2.15：别名同层目标按权重真正分流（2026-11-06）
+
+- 现象：管理台请求日志里 `deepseek-v4.1.new-mix` 几乎全是 `qoder-intl`，看不到 CodeArts。
+- 证据（路由器实时核对）：
+  - `GET /v1/models` 显示该别名的目标顺序为
+    `workbuddy-intl → qoder-intl → officeace-cn → workbuddy-cn → codearts-cn → qoder-cn`
+    （`priority`、`weight` 全为 0/1，实际按行 id 排序）；
+  - `dispatch` 是严格顺序故障转移：第 2 个目标 `qoder-intl` 成功即返回，后面的
+    `codearts-cn` 永远轮不到；
+  - `workbuddy-intl` 三个账号当时都在冷却（`no_capacity`），所以流量稳定落到第 2 个目标；
+  - 直接调用 `codearts-cn::deepseek-v4.1-flash-1017` 成功，说明 CodeArts 本身正常，只是没被选中。
+- 根因：`docs/ROUTING.md` 说 `weight` 是「同优先级内的权重」，但实现只把 `weight`
+  当成排序键，同层内没有任何分流，等于「谁排在前面谁吃满」。
+- 修复：
+  - [model_service/mod.rs](file:///D:/codespace/POOL/src/model_service/mod.rs) 的 `RouteTarget`
+    带上 `priority` / `weight`（原生模型为 0/1）；
+  - [api/mod.rs](file:///D:/codespace/POOL/src/api/mod.rs) 新增 `order_targets`：层级仍按
+    `priority` 降序；最高层内按会话 id 做加权会合哈希（`u^(1/weight)`）排序，
+    同一会话固定落在同一目标，不同会话按权重分摊；低层保持配置顺序作为最后兜底。
+- 语义：`priority` = 故障转移层级，`weight` = 同层分流比例。想让 CodeArts 全量优先，
+  把它的 `priority` 调高即可；想按 3:1 分，同层设 `weight = 3 / 1`。
+- 测试：`same_priority_targets_are_spread_by_session`、
+  `one_session_keeps_its_target_inside_a_tier`、`weights_decide_the_share_inside_a_tier`。
+  786 passed；fmt/clippy 通过。
+- 0.2.15 四产物发布并部署到路由器。

@@ -129,6 +129,10 @@ pub struct RouteTarget {
     pub upstream_id: String,
     pub display_name: Option<String>,
     pub capabilities: EffectiveCapabilities,
+    /// Failover tier: every target of a higher tier is tried before a lower one.
+    pub priority: i64,
+    /// Relative share of sessions inside one priority tier.
+    pub weight: u32,
 }
 
 /// Resolution result. A native hit has exactly one target; an alias may have
@@ -232,6 +236,8 @@ impl ModelRouteService {
                 upstream_id: row.upstream_model.clone(),
                 display_name: row.display_name.clone(),
                 capabilities: effective,
+                priority: row.priority,
+                weight: row.weight,
             });
         }
         if targets.is_empty() {
@@ -317,6 +323,8 @@ impl ModelRouteService {
                         upstream_id: entry.upstream_id.clone(),
                         display_name: entry.display_name.clone(),
                         capabilities: effective,
+                        priority: 0,
+                        weight: 1,
                     }],
                 })
             }

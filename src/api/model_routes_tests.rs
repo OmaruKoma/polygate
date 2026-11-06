@@ -74,9 +74,13 @@ async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Vec<u8>) {
 }
 
 fn chat(model: &str) -> Request<Body> {
+    chat_with(model, "hi")
+}
+
+fn chat_with(model: &str, text: &str) -> Request<Body> {
     let body = json!({
         "model": model,
-        "messages": [{"role": "user", "content": "hi"}],
+        "messages": [{"role": "user", "content": text}],
     });
     Request::builder()
         .method("POST")
@@ -85,6 +89,16 @@ fn chat(model: &str) -> Request<Body> {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))
         .expect("request")
+}
+
+async fn reply_text(harness: &RoutesApp, model: &str, text: &str) -> String {
+    let (status, body) = send(&harness.app, chat_with(model, text)).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let body: Value = serde_json::from_slice(&body).expect("json");
+    body["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[tokio::test]
@@ -127,6 +141,32 @@ async fn add_target(
             priority,
             weight: 1,
             capabilities,
+        },
+    )
+    .await
+    .expect("create target");
+}
+
+async fn add_weighted_target(
+    harness: &RoutesApp,
+    alias: &str,
+    provider: &str,
+    upstream: &str,
+    priority: i64,
+    weight: u32,
+) {
+    create_target(
+        &harness.storage,
+        &harness.registry,
+        &harness.catalog,
+        crate::model_service::NewTarget {
+            alias: alias.to_string(),
+            provider: provider.to_string(),
+            upstream_model: upstream.to_string(),
+            display_name: None,
+            priority,
+            weight,
+            capabilities: Value::Null,
         },
     )
     .await
@@ -243,6 +283,64 @@ async fn an_alias_cannot_shadow_a_native_model_id() {
     .await
     .expect_err("alias must not shadow a native id");
     assert!(error.message.contains("conflicts with a native model id"));
+}
+
+#[tokio::test]
+async fn same_priority_targets_are_spread_by_session() {
+    let harness = routes_app().await;
+    add_target(&harness, "spread", "mock-cn", "shared", 0, Value::Null).await;
+    add_target(&harness, "spread", "mock-intl", "shared", 0, Value::Null).await;
+
+    let mut cn = 0;
+    let mut intl = 0;
+    for index in 0..120 {
+        match reply_text(&harness, "spread", &format!("task {index}"))
+            .await
+            .as_str()
+        {
+            "from-cn" => cn += 1,
+            "from-intl" => intl += 1,
+            other => panic!("unexpected reply {other}"),
+        }
+    }
+    assert!(cn > 40 && intl > 40, "cn={cn} intl={intl}");
+}
+
+#[tokio::test]
+async fn one_session_keeps_its_target_inside_a_tier() {
+    let harness = routes_app().await;
+    add_target(&harness, "pinned", "mock-cn", "shared", 0, Value::Null).await;
+    add_target(&harness, "pinned", "mock-intl", "shared", 0, Value::Null).await;
+
+    let first = reply_text(&harness, "pinned", "conversation opener").await;
+    assert!(first == "from-cn" || first == "from-intl", "{first}");
+    for _ in 0..5 {
+        assert_eq!(
+            reply_text(&harness, "pinned", "conversation opener").await,
+            first
+        );
+    }
+}
+
+#[tokio::test]
+async fn weights_decide_the_share_inside_a_tier() {
+    let harness = routes_app().await;
+    add_weighted_target(&harness, "weighted", "mock-cn", "shared", 0, 3).await;
+    add_weighted_target(&harness, "weighted", "mock-intl", "shared", 0, 1).await;
+
+    let mut cn = 0;
+    let mut intl = 0;
+    for index in 0..240 {
+        match reply_text(&harness, "weighted", &format!("job {index}"))
+            .await
+            .as_str()
+        {
+            "from-cn" => cn += 1,
+            "from-intl" => intl += 1,
+            other => panic!("unexpected reply {other}"),
+        }
+    }
+    assert!(cn > 140 && intl > 30, "cn={cn} intl={intl}");
 }
 
 #[tokio::test]

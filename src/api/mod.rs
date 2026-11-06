@@ -436,6 +436,8 @@ fn legacy_resolve(
             upstream_id: entry.upstream_id.clone(),
             display_name: entry.display_name.clone(),
             capabilities,
+            priority: 0,
+            weight: 1,
         }],
     })
 }
@@ -488,7 +490,7 @@ async fn dispatch<W: WireRequest>(
     let mut last_error: Option<GatewayError> = None;
     let mut final_log: Option<LogContext> = None;
 
-    for target in &resolved.targets {
+    for target in order_targets(&resolved.targets, &session_id) {
         let provider = match state
             .registry
             .require_capability(&target.provider, capability)
@@ -644,6 +646,58 @@ async fn dispatch<W: WireRequest>(
             .await;
     }
     Err(error)
+}
+
+/// Order alias targets for one request.
+///
+/// Tiers keep the documented failover semantics: every target of a higher
+/// `priority` is tried before any lower tier, in the configured order. Inside
+/// the highest tier the order is decided per session by weighted rendezvous
+/// hashing, so a conversation stays on one provider while separate sessions
+/// spread over the group in proportion to `weight`.
+fn order_targets<'a>(targets: &'a [RouteTarget], session_id: &str) -> Vec<&'a RouteTarget> {
+    let mut ordered = Vec::with_capacity(targets.len());
+    let mut rest = targets;
+    let mut first_tier = true;
+    while let Some(top) = rest.first() {
+        let end = rest
+            .iter()
+            .position(|target| target.priority < top.priority)
+            .unwrap_or(rest.len());
+        let (tier, tail) = rest.split_at(end);
+        if first_tier && tier.len() > 1 {
+            let mut ranked: Vec<(f64, &RouteTarget)> = tier
+                .iter()
+                .map(|target| (rendezvous_score(session_id, target), target))
+                .collect();
+            ranked.sort_by(|a, b| {
+                b.0.total_cmp(&a.0)
+                    .then_with(|| a.1.provider_id.cmp(&b.1.provider_id))
+            });
+            ordered.extend(ranked.into_iter().map(|(_, target)| target));
+        } else {
+            ordered.extend(tier);
+        }
+        first_tier = false;
+        rest = tail;
+    }
+    ordered
+}
+
+/// Weighted rendezvous score: `u^(1/weight)` with `u` uniform in `(0, 1)`.
+/// The largest score wins, so a target's chance of owning a session is
+/// proportional to its weight, and adding or removing a target only reshuffles
+/// the sessions that hashed to it.
+fn rendezvous_score(session_id: &str, target: &RouteTarget) -> f64 {
+    let digest = Sha256::new_with_prefix(format!(
+        "{session_id}|{}|{}",
+        target.provider_id, target.upstream_id
+    ))
+    .finalize();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    let unit = (u64::from_be_bytes(bytes) as f64 + 1.0) / (u64::MAX as f64 + 2.0);
+    unit.powf(1.0 / f64::from(target.weight.max(1)))
 }
 
 fn exclude_account(excluded: &mut Vec<String>, account: Option<String>) {
