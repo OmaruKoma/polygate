@@ -1295,12 +1295,13 @@
         <div>
           <h2>签到记录</h2>
           <p class="muted">「一键签到」会为所有启用且已授权的账号各执行一次，当天已签到的按已签处理；
-            单个账号也可以在「账号管理 → 详情 → 执行签到」中触发。</p>
+            单个账号也可以在「账号管理 → 详情 → 执行签到」中触发。结果为「结果未知」表示签到请求
+            没有拿到上游回执，点「确认结果」只向上游查询状态，不会重复领取。</p>
         </div>
         <button class="btn primary" id="run-all-checkins">一键签到</button>
       </div>
       ${data.items.length
-        ? `<div class="table-wrap"><table><thead><tr><th>账号</th><th>Provider</th><th>支持签到</th><th>最近签到</th><th>结果</th><th>时间</th></tr></thead><tbody>
+        ? `<div class="table-wrap"><table><thead><tr><th>账号</th><th>Provider</th><th>支持签到</th><th>最近签到</th><th>结果</th><th>时间</th><th></th></tr></thead><tbody>
           ${data.items
             .map(
               (item) => `<tr>
@@ -1310,6 +1311,9 @@
                 <td>${item.last ? checkinStatus(item.last.status).badge : '<span class="badge muted">暂无</span>'}</td>
                 <td class="tiny">${esc(item.last?.summary || "—")}</td>
                 <td class="tiny">${item.last ? fmtDate(item.last.completed_at) : "—"}</td>
+                <td>${item.last?.status === "unknown"
+                  ? `<button class="btn small" data-confirm-checkin="${esc(item.account_id)}">确认结果</button>`
+                  : ""}</td>
               </tr>`,
             )
             .join("")}
@@ -1317,6 +1321,26 @@
         : `<div class="empty"><strong>暂无账号</strong>添加账号后才能展示签到记录。</div>`}`;
 
     $("#run-all-checkins")?.addEventListener("click", (event) => runAllCheckins(event.currentTarget));
+    $$("[data-confirm-checkin]", container).forEach((button) =>
+      button.addEventListener("click", () => confirmCheckin(button.dataset.confirmCheckin, button)),
+    );
+  }
+
+  async function confirmCheckin(id, button) {
+    button.disabled = true;
+    button.textContent = "确认中…";
+    toast("正在向上游确认今天的签到结果…");
+    try {
+      const result = await api(`/admin/api/accounts/${encodeURIComponent(id)}/checkin`, {
+        method: "POST",
+      });
+      toast(result.summary || checkinStatus(result.status).label, result.status === "failed" ? "error" : "ok");
+      renderRoute();
+    } catch (error) {
+      toast(error.message, "error");
+      button.disabled = false;
+      button.textContent = "确认结果";
+    }
   }
 
   async function runAllCheckins(button) {

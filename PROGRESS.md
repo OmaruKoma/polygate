@@ -5904,3 +5904,18 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   （CodeArts CN 两账号合计 200/300，无快照账号计 unknown=1；Qoder CN 单独一行）。
   781 passed；fmt/clippy 通过。
 - 0.2.12 四产物发布并部署到路由器。
+
+## 90. v0.2.13：签到「结果未知」可一键确认 + OfficeAce 传输错误细分（2026-11-06）
+
+- 现象：2026-11-06 一键签到批次里，两个 OfficeAce 账号记录 `unknown`（结果未知），
+  第三个成功。`checkin_runs` 显示两者 `last_error_category = transport`、耗时 10.5s，
+  摘要只有 `OfficeAce request failed`——传输层没拿到回执，而签到是写操作，
+  无法确认是否已领取，因此按设计记 `Unknown`，绝不自动重试（避免重复领取）。
+- 处理：这类记录本身可以由一次手工重试确认——`run_for` 对 `Existing(Unknown)`
+  走 `reconcile_unknown`，只查询上游状态，不会再发 claim。
+- 改动：
+  - [web/app.js](file:///D:/codespace/POOL/web/app.js) 签到管理页对 `unknown` 行新增
+    「确认结果」按钮（复用单账号签到端点），并在页头说明语义。
+  - [providers/officeace/http.rs](file:///D:/codespace/POOL/src/providers/officeace/http.rs)
+    的 `classify_transport` 区分连接失败 / 响应中断 / 请求未发出，便于下次定位。
+- 781 passed；fmt/clippy 通过；0.2.13 四产物发布并部署到路由器。

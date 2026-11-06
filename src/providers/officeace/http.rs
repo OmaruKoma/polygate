@@ -421,10 +421,20 @@ async fn limited_body(response: reqwest::Response) -> Result<String, GatewayErro
 
 pub fn classify_transport(error: reqwest::Error) -> GatewayError {
     if error.is_timeout() {
-        GatewayError::new(ErrorKind::Timeout, "OfficeAce request timed out")
-    } else {
-        GatewayError::new(ErrorKind::Transport, "OfficeAce request failed")
+        return GatewayError::new(ErrorKind::Timeout, "OfficeAce request timed out");
     }
+    // Keep the stage in the message: a connect failure never reached the
+    // upstream, while an interrupted body may have already applied the write.
+    let stage = if error.is_connect() {
+        "connection failed"
+    } else if error.is_body() || error.is_decode() {
+        "response was interrupted"
+    } else if error.is_request() {
+        "request could not be sent"
+    } else {
+        "request failed"
+    };
+    GatewayError::new(ErrorKind::Transport, format!("OfficeAce {stage}"))
 }
 
 fn retry_hint(status: u16) -> String {
