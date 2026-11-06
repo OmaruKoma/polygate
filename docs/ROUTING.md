@@ -66,7 +66,8 @@
   该比例的账号也被排除。**未知额度永不排除**，也不会被写成 0。
 - **冷却**：连续传输错误/超时/5xx 达到 `failure_threshold` 后按指数退避冷却
   （`cooldown_base_secs` → `cooldown_max_secs`）。客户端错误、429、402、认证失败
-  不触发冷却。
+  不触发冷却。WorkBuddy Intl 的 `11128 first message is not system prompt` 属于请求
+  形状问题，同样只回退目标、不冷却账号。
 - 不同 Provider/Region 的账号互相隔离；CN/Intl 凭据不会串用。
 
 所有调度状态在进程内、按账号数量有界，无后台任务、无全局异步大锁。多进程共享同一

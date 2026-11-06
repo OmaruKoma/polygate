@@ -108,10 +108,22 @@ fn classify_code(code: i64, message: &str) -> GatewayError {
         10105 => ErrorKind::RateLimited,
         11102 | 11158 => ErrorKind::ModelUnavailable,
         11101 | 11115 | 11129 | 10012 | 11148 | 11149 => ErrorKind::BadRequest,
+        // The Intl first-message check reuses `11128`. It depends only on the
+        // request shape, so it is a client error: cooling the account for it
+        // would punish a healthy pool.
+        11128 if is_leading_system_check(message) => ErrorKind::BadRequest,
         11128 | 11135 => ErrorKind::UpstreamServer,
         _ => ErrorKind::UpstreamServer,
     };
     GatewayError::new(kind, public_message(code, message))
+}
+
+/// Intl answers `11128 first message is not system prompt` when `messages[0]`
+/// is not a system message; the adapter does not inject one.
+fn is_leading_system_check(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("first message is not system prompt")
 }
 
 fn with_status(error: GatewayError, status: i64) -> GatewayError {
@@ -228,6 +240,25 @@ mod tests {
             r#"{"code":11128,"msg":"Illegal API invocation from an unapproved channel"}"#,
         );
         assert_eq!(error.kind, ErrorKind::UpstreamServer);
+    }
+
+    #[test]
+    fn the_intl_first_message_check_never_cools_an_account() {
+        let error = classify_http_status(
+            400,
+            r#"{"code":11128,"msg":"first message is not system prompt"}"#,
+        );
+        assert_eq!(error.kind, ErrorKind::BadRequest);
+        assert!(error.message.contains("first message is not system prompt"));
+        // Case does not change the meaning.
+        assert_eq!(
+            classify_http_status(
+                400,
+                r#"{"code":11128,"msg":"First Message Is Not System Prompt"}"#
+            )
+            .kind,
+            ErrorKind::BadRequest
+        );
     }
 
     #[test]

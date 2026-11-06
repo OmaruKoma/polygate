@@ -5961,3 +5961,21 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   `one_session_keeps_its_target_inside_a_tier`、`weights_decide_the_share_inside_a_tier`。
   786 passed；fmt/clippy 通过。
 - 0.2.15 四产物发布并部署到路由器。
+
+## 93. v0.2.16：WorkBuddy Intl 首条消息检查不再冷却账号（2026-11-06）
+
+- 现场：给 `deepseek-v4.1.new-mix` 的 `workbuddy-intl` 新增目标 `deepseek-v4.1-flash-sg` 后实测：
+  - 只发 user 消息 → `11128 first message is not system prompt`；
+  - 先发 system 再发 user → 200（新的 `-sg` 和旧的 `flash` 两个 id 都能成功，40 次别名探测里
+    Intl 命中 10 次：旧 id 7 次、新 id 3 次）。
+  结论：模型 id 不是冷却原因；Intl 网关要求 `messages[0]` 为 system，而这个失败之前被归为
+  `UpstreamServer`，连续几次就把三个 Intl 账号打进冷却。
+- 决策：不注入 system（不改请求内容、不伪装客户端），只把该文案变体归为请求形状错误。
+- 改动：[providers/workbuddy/error.rs](file:///D:/codespace/POOL/src/providers/workbuddy/error.rs)
+  `classify_code` 对 `11128` 且消息包含 `first message is not system prompt`（大小写不敏感）
+  返回 `BadRequest`；其它 `11128`（如 unapproved channel）仍是 `UpstreamServer`。
+  该分类同时覆盖 SSE 流内错误帧。效果：账号不冷却（`classify_failure` → Client），
+  请求按目标顺序回退到下一个目标。
+- 测试：`the_intl_first_message_check_never_cools_an_account`；`channel_check_...` 保持原断言。
+- 文档：`docs/PROVIDERS.md` §4、`docs/ROUTING.md` §4。
+- 787 passed；fmt/clippy 通过；0.2.16 发布并部署到路由器。

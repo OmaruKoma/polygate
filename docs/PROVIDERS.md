@@ -127,6 +127,8 @@
     Intl 实测还有一种来源：首条消息不是 `system` 时同样返回 `11128`
     （`first message is not system prompt`），并且会**掩盖真实的 11158 权限错误**——
     排查模型权限时先补 system 再看第二个错误码。
+    该文案变体只取决于请求形状，网关按 `BadRequest` 处理：账号**不进入冷却**，请求按
+    目标回退继续尝试（0.2.16）。其余 `11128`（如 unapproved channel）仍是上游错误。
   - M14-A 修正：本节旧文本曾把 `402`、`3004` 列入“会话失效”，并把 `12153` 当作 SessionInvalid。`402`/`412` 实为 credits 用尽（`dsh` 与 Coding2API 一致）；`3004` 仅见于一张编码损坏的错误表，已撤回。
 - **设备令牌**：`X-Device-Token` 由腾讯 Turing Shield SDK 生成。本项目**不实现**该 SDK、不伪造设备指纹；仅在运维显式提供静态头时透传，否则功能可能被上游降级/拒绝，状态保持 `experimental`。
 - **当前状态**：`experimental`。M14-B 已实现原生 Rust 核心（凭据读取、模型发现、非流式/SSE、工具调用、错误归一化、CN/Intl 隔离）；M14-C 补齐刷新生命周期、设备码授权、额度与 CN 签到。全部为 **MockVerified**，**无真实账号、未发真实请求**。协议、架构适配、CN/Intl 矩阵与诚实头探针见 **`docs/WORKBUDDY_MIGRATION.md`**，执行记录见 `PROGRESS.md` §37 与 `docs/MIGRATION_MATRIX.md` §9。
