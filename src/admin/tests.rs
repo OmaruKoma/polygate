@@ -902,6 +902,42 @@ async fn unknown_quota_is_reported_as_unknown() {
 }
 
 #[tokio::test]
+async fn one_click_quota_refresh_reports_every_enabled_account() {
+    let upstream = sts_server().await;
+    let harness = harness(&upstream.base_url, 600).await;
+    let (session, _) = setup(&harness.app).await;
+
+    for name in ["bulk-a", "bulk-b"] {
+        let (status, _) = authed(
+            &harness.app,
+            &session,
+            Method::POST,
+            "/admin/api/accounts",
+            Some(json!({"region": "cn", "name": name})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    // The harness registers no providers, so every entry is reported as
+    // unknown instead of failing the whole batch.
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        "/admin/api/quotas/refresh",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["count"], 2);
+    assert_eq!(body["refreshed"], 0);
+    assert_eq!(body["failed"], 2);
+    assert!(body["items"][0]["account_id"].is_string());
+    assert_eq!(body["items"][0]["unknown"], true);
+}
+
+#[tokio::test]
 async fn dashboard_sums_credits_per_provider_and_keeps_unknown_out() {
     use crate::quota::{QuotaSnapshot, QuotaStatus, QuotaUnit};
 

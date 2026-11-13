@@ -315,6 +315,7 @@ pub fn router(state: AdminState) -> Router {
             "/admin/api/accounts/{id}/auth-status",
             get(api::local_auth_status).post(api::refresh_auth_status),
         )
+        .route("/admin/api/quotas/refresh", post(api::refresh_all_quotas))
         .route(
             "/admin/api/accounts/{id}/quota",
             get(api::get_quota).post(api::refresh_quota),
@@ -330,6 +331,10 @@ pub fn router(state: AdminState) -> Router {
         .route(
             "/admin/api/auth/active/cancel",
             post(api::cancel_active_auth),
+        )
+        .route(
+            "/admin/api/auth/doubao/session",
+            post(api::import_doubao_session),
         )
         .route(
             "/admin/api/auth/loomy/session",

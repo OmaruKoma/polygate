@@ -150,6 +150,41 @@
 - **原因**：参考仓库为 AGPL-3.0（禁止复制），其可用性依赖第三方验证码参数与设备指纹，与本项目边界冲突；且不在当前必需 Provider 列表内。
 - **残留资料**：`docs/RESEARCH.md` §12 与 `.refs/liu5269_zcode2api` 仅作为历史审计记录保留，**不得据此实现或重新纳入**。
 
+## 6.5 ByteDance Doubao（豆包 / DoubaoWork，CN）
+
+- **证据**：`docs/DOUBAO_MIGRATION.md`，来源是 Apache-2.0 参考网关
+  `2951461586/Doubao2API`（只取协议事实，未复制代码）＋ 2026-11-13 对真实上游的探测。
+- **入口**：`POST https://www.doubao.com/chat/completion`，只有流式（SSE）。
+- **鉴权**：登录 Cookie（`sessionid` / `sid_guard` / `ttwid` / `odin_tt`）＋
+  `x-tt-passport-csrf-token`（取自 `passport_csrf_token`）。
+- **设备身份（关键边界）**：`device_id` / `web_id` / `fp` 是**上游风控必需项**。实测：
+  只带会话 Cookie、不带设备参数 → `710022004 rate limited` + `shark_admin` 滑动验证；
+  带桌面端自己的三件套 → 正常。因此本 Provider **只接受导入的设备参数，绝不生成**，
+  缺失时在本地直接报 `AuthInvalid`，不发请求。
+- **不伪装客户端**：实测 `Origin`、`Referer`、浏览器 UA 均可省略，故一律不带，UA 用
+  `polygate/<version>`。
+- **模型**：对话泳道上游不按模型名路由，只有 `need_deep_think` 三档（0/1/3）。对外暴露
+  `doubao` / `doubao-think` / `doubao-expert`；未知模型名回落到快速档（与上游一致）。
+  **豆包工作（实验性）**：桌面端「工作」菜单里的第三方模型走同一条 `/chat/completion`
+  的另一条泳道（`need_deep_think=10001` + `agent_mode=1` + `model_config.model_item_key`），
+  对外暴露 `doubao-deepseek-v4.1-flash` / `doubao-glm-5.3` / `doubao-glm-5.3-flash` /
+  `doubao-kimi-k3-pro` / `doubao-kimi-k3-pro-highspeed`。名单是按账号菜单抓包硬编码的，
+  key 随灰度变化，非法 key 上游静默回落默认模型且**不会报错**，因此这些 id 一律标注 `实验性`。
+- **响应**：私有补丁流。`SSE_ACK` 会话 id；`block_type=10040` 第 1 个容器开启思维链、
+  第 2 个起是正文；`{"text": ...}` 紧凑增量按当前阶段归属；`STREAM_ERROR` /
+  `error_code` 转成流内错误（`710022004` → `RateLimited`）。响应里的 `model_id` 恒为
+  agent 编号、`mode_downgrade_reason` 对伪造 key 也是 `success`，**响应体无法判断后端模型**；
+  工作泳道的自我认知固定是「豆包」（官方客户端选 DeepSeek 后同样如此）。
+- **用量**：上游不返回 token 数，`usage` 保持 `null`。额度走
+  `POST /alice/commerce/sale/subscription/quota/summary/`（`{"product_line":"doubao"}`，
+  无需 `a_bogus`）：有额度时取 `window_limit_section.window_limit_groups[0]`；
+  没有数值（免费账号 `hasActiveSubscription:false`）保持 `unknown`，不写 0、不估算。
+- **不支持**：工具调用（无 tool surface）、图片/文件（上游只认自家资源中心 `uri`，
+  转存链路未实现）、会话续接、取消、签到。
+- **状态**：Provider `experimental` —— 对话（流式/非流式）、三档、思维链、额度汇总均已用
+  真实登录态在路由器上端到端实测；**豆包工作的五个第三方模型为实验性**：可用性取决于账号
+  菜单是否下发对应 key，网关无法校验。图片与工具明确不支持。
+
 ## 7. 明确排除
 
 - **ZCode（Z.AI / BigModel）**：见 §6；不实现任何能力，不因 Coding2API 支持而重新加入。
@@ -184,6 +219,7 @@
 | WorkBuddy Intl | 已实现（MockVerified） | 已实现（MockVerified） | 已实现（MockVerified） | Unsupported | 已实现（credits；M14-C，MockVerified） | Unsupported | unavailable（首条 system/会话头未适配；签到 Unsupported） |
 | Loomy CN | 已实现（会话导入；模型发现/Chat/SSE/额度 Live Verified 2026-10-30） | 已实现（真实账号 10 个 chat 模型） | 已实现（Live Verified；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified） | Unsupported（不做签到/领奖） | experimental（Chat/SSE/额度已实测；无 refresh，14 天需重导） |
 | OfficeAce CN | 已实现（M17；华为云 PKCE + DPoP 轮询） | 已实现（MockVerified） | 已实现（OpenAI 协议；MockVerified） | Unsupported（无原生会话） | 已实现（officeace_points 主账；MockVerified） | 已实现（每日 bonus claim；默认关闭，MockVerified） | experimental（无真实账号；V11/V4 签名已按参考向量逐字节比对） |
+| Doubao CN | 已实现（补丁流解析；Live Verified 2026-11-13） | 已实现（Live Verified；**豆包工作 5 个第三方模型为实验性**） | Unsupported（无 tool surface） | Unsupported（无原生会话） | 已实现（订阅汇总；免费账号 unknown，不写 0） | Unsupported | experimental（Chat/三档/思维链/额度已用真实登录态实测；豆包工作模型为实验性，依赖账号菜单下发 key；图片与工具不支持；设备身份必须导入） |
 | CodeBuddy CN | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 | CodeBuddy Intl | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 

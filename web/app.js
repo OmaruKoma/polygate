@@ -48,6 +48,19 @@
       pollInterval: 5000,
       autoCheckNote: "等待在官方页面完成授权，本页面会自动检查结果…",
     },
+    doubao: {
+      label: "Doubao",
+      authPath: "doubao",
+      siteNote:
+        "豆包没有浏览器授权入口：登录态是桌面客户端的 Cookie。PolyGate 只保存 Cookie 与你从客户端复制来的设备参数，不保存账号密码，也不生成或伪造设备身份。",
+      startLabel: "导入登录态",
+      successToast: "Doubao 账号已导入",
+      supportsCheckin: false,
+      cookieImport: true,
+      sessionPath: "doubao",
+      cnLoginOnly: true,
+      regionHint: "豆包只有 www.doubao.com 一个部署，站点固定为 CN。",
+    },
     loomy: {
       label: "Loomy",
       authPath: "loomy",
@@ -507,7 +520,10 @@
             credits.known ? ` · 剩余合计 ${formatCredits(credits.remaining)}` : ""
           }${credits.unknown ? ` · ${credits.unknown} 个未知` : ""}</span>
         </div>
-        <button class="btn primary" id="add-account">添加账号</button>
+        <div class="row-actions">
+          <button class="btn" id="refresh-all-quotas" title="为所有启用账号重新查询一次额度">一键刷新额度</button>
+          <button class="btn primary" id="add-account">添加账号</button>
+        </div>
       </div>
       ${data.items.length ? accountsTable(data.items, provider) : `
         <div class="empty">
@@ -524,6 +540,7 @@
       }),
     );
     $("#add-account")?.addEventListener("click", openAddAccount);
+    $("#refresh-all-quotas")?.addEventListener("click", (event) => refreshAllQuotas(event.currentTarget));
     $$("[data-action]", container).forEach((button) =>
       button.addEventListener("click", () => handleAccountAction(button.dataset.action, button.dataset.id)),
     );
@@ -608,6 +625,13 @@
                : ""}
              <p class="hint">${esc(provider.sessionHint)}</p>`
           : ""}
+        ${provider.cookieImport
+          ? `<label>Cookie 串<textarea id="flow-cookies" rows="3" spellcheck="false" placeholder="sessionid=...; ttwid=...; passport_csrf_token=..."></textarea></label>
+             <label>device_id（必需）<input id="flow-device-id" spellcheck="false" placeholder="桌面端请求参数里的 device_id"></label>
+             <label>web_id（必需）<input id="flow-web-id" spellcheck="false" placeholder="桌面端请求参数里的 web_id"></label>
+             <label>fp（必需）<input id="flow-fp" spellcheck="false" placeholder="桌面端请求参数里的 fp"></label>
+             <p class="hint">这三个设备参数必须来自你自己的登录：上游会把陌生设备当成风控信号（710022004），PolyGate 不会替你生成。</p>`
+          : ""}
         ${provider.needsDeviceIds
           ? `<label>machineId（32 位十六进制）<input id="flow-machine" maxlength="32" spellcheck="false" placeholder="与登录浏览器一致的 machineId"></label>
              <label>deviceId（32 位十六进制）<input id="flow-device" maxlength="32" spellcheck="false" placeholder="与登录浏览器一致的 deviceId"></label>
@@ -665,9 +689,47 @@
     }
   }
 
+  async function importCookieLogin(modal, provider) {
+    const status = $("#flow-status", modal);
+    const cookies = $("#flow-cookies", modal).value.trim();
+    const deviceId = $("#flow-device-id", modal).value.trim();
+    const webId = $("#flow-web-id", modal).value.trim();
+    const fp = $("#flow-fp", modal).value.trim();
+    const name = $("#flow-name", modal).value.trim();
+    if (!cookies.includes("sessionid")) {
+      status.textContent = "Cookie 串里必须包含 sessionid。";
+      return;
+    }
+    if (!deviceId || !webId || !fp) {
+      status.textContent = "device_id / web_id / fp 都必须填：网关不会替你生成设备身份。";
+      return;
+    }
+    status.textContent = `正在向 ${provider.label} 校验登录态…`;
+    try {
+      const result = await api(`/admin/api/auth/${provider.sessionPath}/session`, {
+        method: "POST",
+        body: JSON.stringify({
+          cookies,
+          device_id: deviceId,
+          web_id: webId,
+          fp,
+          name: name || null,
+        }),
+      });
+      toast(`${provider.successToast}${importedSessionSummary(result)}`, "ok");
+      closeModal();
+      renderRoute();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  }
+
   async function startAuthFlow(modal) {
     const provider = modal.provider || PROVIDERS[state.provider] || PROVIDERS.codearts;
     const status = $("#flow-status", modal);
+    if (provider.cookieImport) {
+      return importCookieLogin(modal, provider);
+    }
     if (provider.sessionImport) {
       return importSession(modal, provider);
     }
@@ -895,6 +957,27 @@
       renderRoute();
     } catch (error) {
       toast(error.message, "error");
+    }
+  }
+
+  async function refreshAllQuotas(button) {
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "刷新中…";
+    toast("正在刷新所有账号的额度…");
+    try {
+      const result = await api("/admin/api/quotas/refresh", { method: "POST" });
+      toast(
+        result.count
+          ? `已刷新 ${result.count} 个账号：${result.refreshed} 个有额度 · ${result.failed} 个未知或失败`
+          : "没有启用的账号",
+        result.failed ? "error" : "ok",
+      );
+      renderRoute();
+    } catch (error) {
+      toast(error.message, "error");
+      button.disabled = false;
+      button.textContent = label;
     }
   }
 

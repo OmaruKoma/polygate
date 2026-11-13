@@ -127,6 +127,7 @@ admin ──✗──> sched/直接 SQLite/具体 Provider 请求（除 CodeArts
 | GET/PATCH/DELETE | `/admin/api/accounts/{id}` | 详情 / 改名与启停 / 删除（需 `confirm=<id>`） |
 | GET/POST | `/admin/api/accounts/{id}/auth-status` | 本地状态 / 真实探测 |
 | GET/POST | `/admin/api/accounts/{id}/quota` | 本地额度 / 刷新额度 |
+| POST | `/admin/api/quotas/refresh` | 一键刷新所有启用账号的额度（逐个执行，返回 `count/refreshed/failed/items`） |
 | GET | `/admin/api/accounts/{id}/checkins` | 单账号签到记录 |
 | POST | `/admin/api/auth/codearts/start` | 发起授权 |
 | GET | `/admin/api/auth/codearts/{flow_id}` | 轮询状态（惰性过期） |

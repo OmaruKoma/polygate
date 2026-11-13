@@ -5979,3 +5979,179 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 - 测试：`the_intl_first_message_check_never_cools_an_account`；`channel_check_...` 保持原断言。
 - 文档：`docs/PROVIDERS.md` §4、`docs/ROUTING.md` §4。
 - 787 passed；fmt/clippy 通过；0.2.16 发布并部署到路由器。
+
+## 94. v0.2.17：流式用量入账 + 别名视觉目标（2026-11-10）
+
+- 现场：管理台「用量统计」长期几乎不动。只读核对路由器数据库：
+  `request_logs` 5053 条（4750 条 `stream=1`），`usage_events` 只有 624 条且停在
+  `2026-11-07T07:38Z`，之后没有任何新行。
+- 根因：`usage_events` 只在 `dispatch` 的非流式分支调用
+  [api/mod.rs](file:///D:/codespace/POOL/src/api/mod.rs) `record_usage` 写入；流式分支直接
+  返回 SSE，从不记账。编码 Agent 默认流式，所以统计等于停摆。
+- 修复：[api/logging.rs](file:///D:/codespace/POOL/src/api/logging.rs) 给 `LogContext` 增加
+  `record_usage`，`observing_stream` 在流正常结束时写入一条 `usage_events`（失败流已有请求
+  日志，不计用量；非流式分支保持原逻辑，不会重复记账）。
+- 视觉：`deepseek-v4.1.new-mix` 增加两个 `priority = -1` 的视觉目标
+  `qoder-cn/kmodel_latest`、`qoder-intl/cmodel`，`capabilities = {"vision":true}`。
+  别名解析按 `needs.vision` 过滤目标：带图请求只剩这两个目标，纯文本请求仍走
+  `priority = 0` 的原有目标，分流比例不变。视觉模型沿用
+  `model_service::verified_vision` 的实测白名单（`dfmodel`/`dmodel` 实测读不出图，不启用）。
+- 实测（路由器 0.2.17）：
+  - `GET /v1/models` 的该别名 `capabilities.vision = true`，目标表出现两条 `p=-1`；
+  - 带 1×1 PNG 的流式请求 → `request_logs` 记录 `qoder-cn / kmodel_latest / 200`，
+    回答正常；
+  - 纯文本流式请求 → 仍落在 `qoder-cn / dfmodel`；
+  - 两次流式请求都写入 `usage_events`（106/177、35/11 tokens）。
+- 测试：`a_finished_stream_counts_as_usage`、`a_failed_stream_is_logged_but_not_counted_as_usage`；
+  789 passed；fmt/clippy 通过；0.2.17 部署到路由器（旧库备份
+  `polygate.db.bak-20261110-vision-usage`，旧二进制 `polygate.bak-0.2.16`）。
+- 追加（同日）：核对 `GET /v1/models`，CodeArts / OfficeAce / WorkBuddy / Loomy 均有
+  `vision = true` 的模型。用红色 8×8 PNG 经原生模型名逐个实测：
+  `codearts-intl/Qwen3-VL-235B`、`codearts-cn/deepseek-v4.1-flash-1017`、
+  `officeace-cn/kimi-k3`、`officeace-cn/deepseek-v4.1-flash`、`workbuddy-cn/glm-5.3`、
+  `workbuddy-intl/kimi-k3` 全部答出 “Red”。据此给别名补视觉兜底：
+  `codearts-intl/Qwen3-VL-235B`（p=-2）、`officeace-cn/kimi-k3`（p=-3）、
+  `workbuddy-cn/glm-5.3`（p=-4）。别名实测仍优先落 `qoder-cn/kmodel_latest`。
+  旧库备份 `polygate.db.bak-20261110-vision-fallbacks`。
+
+## 95. v0.2.18：一键刷新全部账号额度（2026-11-10）
+
+- 需求：账号页原本只能逐个打开详情刷新额度，需要一个和「一键签到」对等的批量按钮。
+- 后端：[admin/api/mod.rs](file:///D:/codespace/POOL/src/admin/api/mod.rs) 抽出
+  `refresh_quota_for`（取凭据 → 查 Provider → `quota_with_context` → 存快照），单账号接口
+  改为复用它；新增 `POST /admin/api/quotas/refresh`，对全部启用账号逐个刷新，返回
+  `count / refreshed / failed / items`。Provider 未注册、无凭据等错误以 `unknown: true`
+  记入该账号条目，不中断整批；上游失败仍写入 `error` 快照，符合既有额度语义。
+- 前端：[web/app.js](file:///D:/codespace/POOL/web/app.js) 账号页头部新增「一键刷新额度」，
+  点击后按钮置灰显示「刷新中…」，完成后 toast 汇报“有额度 / 未知或失败”数量并重绘页面。
+- 路由：`/admin/api/quotas/refresh`（POST，需管理会话 + CSRF；避免与
+  `/accounts/{id}/quota` 的参数段冲突）。
+- 测试：`one_click_quota_refresh_reports_every_enabled_account`（空注册表下两个账号都被
+  记成 unknown，批次仍返回 200）。790 passed；fmt/clippy 通过。
+- 部署：0.2.18 上线路由器；`POST /admin/api/quotas/refresh` 未登录返回 401，
+  `/admin/static/app.js` 含新按钮。文档：`docs/WEB_ADMIN.md` §5。
+
+### 94.1 撤回：别名视觉目标（同日）
+
+- `deepseek-v4.1.new-mix` 上新增的 5 个视觉目标
+  （`qoder-cn/kmodel_latest`、`qoder-intl/cmodel`、`codearts-intl/Qwen3-VL-235B`、
+  `officeace-cn/kimi-k3`、`workbuddy-cn/glm-5.3`，`priority = -1..-4`）全部删除。
+- 原因：别名目标会出现在管理台和 `/v1/models` 的 `targets` 里，与别名实际职责不符；
+  带图请求在目标层被静默换成另一个上游模型、对外仍是原别名，排查困难。
+- 现状（已核验）：别名回到 6 个文本目标，`capabilities.vision = false`，带图请求
+  返回 `400 no usable target ... does not support vision input`。视觉请直接调用原生
+  视觉模型（`qoder-cn::kmodel_latest`、`codearts-intl::Qwen3-VL-235B` 等，均已实测）。
+- 旧库备份 `polygate.db.bak-20261110-remove-vision-targets`。
+
+## 96. v0.2.19 开发：ByteDance Doubao（豆包）Provider（2026-11-13）
+
+- 需求：参考 `2951461586/Doubao2API`（Apache-2.0，Go）判断能否做豆包上游。先做探测，
+  再做文本链路。
+- 探测结论（真实上游）：
+  - 本机桌面端装在 `%LOCALAPPDATA%\Doubao`（参考项目默认找 `DoubaoWork`，故自动导入失效）；
+    用 `-doubao-dir "...\Doubao\User Data"` 可导入 31 项 Cookie。
+  - 只带会话 Cookie、不带 `device_id`/`web_id`/`fp` → `710022004 rate limited` +
+    `shark_admin` 滑动验证；带三件套 → `SSE_ACK` 正常。**设备身份是风控必需项**。
+  - `Origin`/`Referer`/浏览器 UA 均可省略，实测仍 200。
+  - 参考网关实测：三档（fast/think/expert）、流式、思维链、图片理解（需资源中心转存）可用。
+- 实现（`src/providers/doubao/`）：
+  - [credential.rs](file:///D:/codespace/POOL/src/providers/doubao/credential.rs) Cookie 白名单
+    归一化 + CSRF 提取，`Debug` 脱敏；缺失设备参数返回 `missing_identity`。
+  - [http.rs](file:///D:/codespace/POOL/src/providers/doubao/http.rs) 公参 + Cookie + CSRF 头；
+    缺设备身份时**本地拒绝、不发请求**；不带伪装头。
+  - [payload.rs](file:///D:/codespace/POOL/src/providers/doubao/payload.rs) 历史压平为单轮提示，
+    `need_deep_think` 定档；图片/工具显式 `Unsupported`，不静默丢弃。
+  - [events.rs](file:///D:/codespace/POOL/src/providers/doubao/events.rs) SSE 解码 +
+    补丁流翻译（10040 首个容器 = 思维链），错误帧 → 流内错误。
+  - [provider.rs](file:///D:/codespace/POOL/src/providers/doubao/provider.rs) 非流式 = 聚合流；
+    目录 = 三档；`quota=false`（上游无额度/无 token）。
+  - 接入 `ProviderKind::Doubao`、runtime 注册、`POST /admin/api/auth/doubao/session` 导入
+    （先探测再落库）、管理台 Doubao 页签与 Cookie 导入表单。
+- 实测（路由器上 0.2.18 临时实例，真实登录态）：
+  `/v1/models` 三个档位；`doubao` 非流式 `OK`；`doubao-think` 流式正常分块；
+  `doubao-expert` 非流式正文 + `reasoning_content` 均正确。
+- 门禁：821 passed；fmt/clippy 通过。状态 `experimental`；文档
+  `docs/DOUBAO_MIGRATION.md`、`docs/PROVIDERS.md` §6.5 与能力矩阵。
+- 未做：图片（资源中心转存）、工具调用、签到、扫码登录。
+
+## 97. 豆包本机设备信息一键提取（2026-11-13）
+
+导入豆包需要 `device_id` / `web_id` / `fp`，手工从客户端抓包不现实。新增
+`tools/doubao-extract.js`（+ `tools/doubao-extract.cmd` 双击入口），从
+`%LOCALAPPDATA%\Doubao\User Data` 直接取：
+
+- Cookie：`Default/Network/Cookies`，Chromium `v10` = DPAPI 解包
+  `Local State` 的 `os_crypt.encrypted_key` 后 AES-256-GCM，去掉 `SHA256(host_key)` 前缀。
+- `device_id` / `install_id`：`Local State` 的 `aha.device`。
+- `web_id`：`Local Storage/leveldb` 的 `tea_cache_tokens_582478`（leveldb 前缀压缩会吃掉键名，
+  按 aid → 配对 `user_unique_id` → 最新时间戳三级回退）。
+- `fp`：同目录 localStorage 的 `s_v_web_id`（页面自己发的 `verify_…`）。
+
+实测：
+
+- 提取的 26 项 Cookie 与人工导入的完全一致；`web_id` 与既有记录一致。
+- 缺失字段只报缺失，不生成随机值（不伪造设备身份）。
+- 探测顺带确认：`device_id`/`web_id`/`fp` 只校验存在与形状，全随机组合同样能进；
+  三件套全缺才 `710022004` + `shark_admin` 滑动验证。当前账号已被软限流
+  （`710022002`），无法用成功响应二次确认 `fp` 的具体取值。
+- 未跑 Rust 门禁（本次只加脚本与文档，未动 `src/`）。
+
+### 97.1 换号实测与独占锁（2026-11-13）
+
+- 豆包一个账号一个档案：换号后新账号落在 `Profile 4`（28 项 Cookie），旧号留在 `Default`。
+- **活动档案的 Cookie 库是独占打开的**（`dwShareMode=0`，只读也 EBUSY），客户端开着就读不到。
+  脚本加 `--kill`（`taskkill /F /IM Doubao.exe`，聊天记录在服务端不丢）和「先退出豆包」的明确报错。
+- 档案按 `Network/Cookies` 的 mtime 倒序，第一个标「最近使用」；读不到最新档案时**直接失败**，
+  不回退到旧账号。
+- 新账号实测：脚本输出直接打 `POST /chat/completion` → `SSE_ACK`，
+  `inner_did=4228…7545`（即 `Local State` 的 `aha.device.device_id`），
+  `SSE_REPLY_END` 收尾，桌面端能看到回答。§97 里「无法确认 `fp`」的疑点到此闭环。
+
+### 97.2 豆包工作模式模型接入（2026-11-13）
+
+- 用 Chromium 调试端口 + 页面内 fetch hook 抓到客户端真实请求：
+  模型泳道由 `option.need_deep_think=10001` + `option.agent_mode=1` +
+  `conversation_init_ext.model_item_key` + `model_config.model_item_key` 决定。
+- `region::WORK_MODELS` 新增五个实测 key：`person-deepseek-v4-1-flash-261017`、
+  `person-glm-5-3-261111`、`person-glm-5-3-flash-261111`、`person-kimi-k3-1-pro-261111`、
+  `person-kimi-k3-1-pro-highspeed-261111`，对外 id 加 `doubao-` 前缀（`doubao-glm-5.3` 等），避免与 qoder/trae 的同名模型撞车。
+- `payload::build_body` 命中工作模型时补 `agent_mode` / `conversation_init_ext` /
+  `model_config`；不命中保持原三档。
+- 门禁：825 passed；fmt/clippy 通过。已交叉编译 aarch64-musl 并部署到路由器
+  （`/usr/bin/polygate`，备份 `polygate.bak-20261113-work`）。
+- 未验证：路由器上还没有导入豆包账号，工作模型的实际调用待导入后复核。
+
+### 97.3 豆包工作模型实况验证（2026-11-13）
+
+导入账号并重启后，路由器 `10.0.0.1:8787` 上实测：
+
+| 用例 | 结果 |
+| --- | --- |
+| `GET /v1/models` | 127 条，其中 doubao 8 条（`doubao` / `doubao-think` / `doubao-expert` + 五个 `doubao-<厂商>` 工作模型） |
+| `doubao-glm-5.3` 非流式 | 正文 + `reasoning_content`（"我将直接给出反向代理的一句话解释。"） |
+| `doubao-kimi-k3-pro` 流式 | 6 个 chunk，`reasoning_content` + `content` 分块，收尾 `[DONE]` |
+| `doubao` 非流式回归 | `OK`，`finish_reason=stop` |
+
+- 发现并修掉一个撞名：`glm-5.3` / `glm-5.3-flash` / `deepseek-v4.1-flash` 在 qoder、trae
+  里已有同名模型（总计 127 条里有重复 id），豆包工作模型统一加 `doubao-` 前缀后重新部署。
+- 重新交叉编译 aarch64-musl 并覆盖 `/usr/bin/polygate`，旧版仍在 `polygate.bak-20261113-work`。
+
+### 97.4 豆包额度探测与「是不是回落」的结论（2026-11-13）
+
+- 新增 `providers/doubao/quota.rs`：`parse_summary` 读
+  `POST /alice/commerce/sale/subscription/quota/summary/`（`{"product_line":"doubao"}`，
+  无需 `a_bogus`），取 `window_limit_section.window_limit_groups[0].{total,remaining}`；
+  没有数字就 `QuotaSnapshot::unknown`（`remaining = null`）并写明原因，不写 0。
+- `http::get_quota_summary` + `provider::quota_with_context` + `capabilities.quota = true`；
+  `headers()` 改成带 `accept` 参数，额度请求要 `application/json`。
+- 本机起了一个临时实例（127.0.0.1:8799，独立 data-dir）走完真实链路：
+  `POST /admin/api/setup` → `POST /admin/api/auth/doubao/session` → `POST /admin/api/accounts/{id}/quota`，
+  返回 `status: unknown`、`remaining: null`、`error: 豆包账号没有订阅，上游没有返回任何额度窗口数值（余额未知）`，
+  上游原文 `hasActiveSubscription: false` / `entitlement_count: 0`。
+- 交叉编译 aarch64-musl 并覆盖路由器 `/usr/bin/polygate`（备份 `polygate.bak-20261113-quota`），
+  `/v1/models` 仍是 127 条、doubao 8 条。
+- 门禁：827 passed；fmt/clippy 通过。
+- 「调用提示还是豆包模型」的排查结论（细节见 `docs/DOUBAO_MIGRATION.md` §13.2）：
+  官方客户端选中 DeepSeek V4.1 Flash 后，问「你是谁」同样回答「我是豆包，你在豆包办公模式里的 AI 助手…」，
+  这是上游 persona；响应里 `model_id` 恒为 38、`mode_downgrade_reason` 对伪造 key 也是 `success`，
+  因此响应体无法区分后端模型。网关侧只按账号菜单下发的实测 key 维护名单。

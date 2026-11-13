@@ -13,3 +13,6 @@ web/dist
 /*.trace
 /*.chlz
 /*.csv
+
+# Extracted Doubao login material (cookies + device identity); never commit.
+tools/doubao-account*.json

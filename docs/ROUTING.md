@@ -32,6 +32,17 @@
 直接返回 `400`（例如“does not support tool calling”），**不会把工具或视觉请求
 发给没有声明该能力的模型**。
 
+别名目标的 `vision` 默认是关闭的，必须在该目标上显式写
+`capabilities = {"vision": true}`（Provider 声明不会自动继承）。视觉模型只启用
+`model_service::verified_vision` 里实测过读图的 id（`dfmodel`/`dmodel` 实测读不出图）。
+
+**不要用别名目标来实现图片分流**（2026-11-10 撤回）：给
+`deepseek-v4.1.new-mix` 加过 `priority = -1..-4` 的视觉目标后再全部删除。别名目标
+会出现在管理台目标列表和 `/v1/models` 的 `targets` 里，与“这个别名只有 6 个文本
+目标”的预期不符；带图请求在目标层静默换成另一个模型，客户端看到的仍是原别名，
+排查时很难看清实际调用的是谁。需要视觉时直接调用原生视觉模型
+（如 `qoder-cn::kmodel_latest`、`codearts-intl::Qwen3-VL-235B`），别名保持单一职责。
+
 ## 3. 多目标与优先级
 
 同一别名可以挂多个目标（管理台“模型管理 → 新建别名”，或

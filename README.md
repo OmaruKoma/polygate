@@ -107,6 +107,7 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 | WorkBuddy（腾讯） | Intl | 同上 | **LiveVerified** |
 | Loomy（讯飞） | CN | 导入桌面端会话（14 天） | **LiveVerified** |
 | OfficeAce（华为 AgentArts） | CN | 华为云授权（PKCE + DPoP + STS） | **LiveVerified** |
+| Doubao（字节，含豆包工作） | CN | 导入桌面端登录态 + 设备三件套（device_id / web_id / fp） | experimental（**豆包工作 5 个第三方模型为实验性**） |
 | TRAE（字节） | CN | 登录态 | MockVerified（无真实账号） |
 | Mock | — | 无 | 仅测试与本地演示 |
 
@@ -114,10 +115,10 @@ SQLite 持久化、账号调度、模型别名、请求日志与签到管理。�
 
 | 已用真实账号确认的项 | Provider |
 | --- | --- |
-| 授权 | CodeArts CN/Intl、Qoder CN/Intl、WorkBuddy CN/Intl、Loomy、OfficeAce |
-| 模型目录 | CodeArts CN（10）/Intl（2）、Qoder CN/Intl（11/15）、WorkBuddy CN/Intl（15/23）、Loomy（10）、OfficeAce（24） |
-| 对话（网关日志 200） | CodeArts CN、WorkBuddy CN（含 SSE）、Loomy |
-| 额度 | CodeArts CN、Qoder CN、Loomy、OfficeAce |
+| 授权 | CodeArts CN/Intl、Qoder CN/Intl、WorkBuddy CN/Intl、Loomy、OfficeAce、Doubao |
+| 模型目录 | CodeArts CN（10）/Intl（2）、Qoder CN/Intl（11/15）、WorkBuddy CN/Intl（15/23）、Loomy（10）、OfficeAce（24）、Doubao（3 档对话 + 5 个工作模型，工作模型实验性） |
+| 对话（网关日志 200） | CodeArts CN、WorkBuddy CN（含 SSE）、Loomy、Doubao CN |
+| 额度 | CodeArts CN、Qoder CN、Loomy、OfficeAce、Doubao CN（免费账号为 unknown，不写 0） |
 | 签到（管理台手工触发） | Qoder CN/Intl（+100 credits）、WorkBuddy CN（+100 credits） |
 
 签到没有自动排程：都由管理员在控制台对指定账号点按触发，表中 +100 credits 是当次上游回执；

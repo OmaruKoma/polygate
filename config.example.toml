@@ -210,6 +210,17 @@ name = "Mock (development)"
 # with a one-time refresh token plus its DPoP key.
 #
 # [[providers]]
+# kind = "doubao"
+# region = "cn"                       # the only deployment; "intl" is rejected
+# enabled = true
+#
+# No OAuth: import the desktop client cookies plus its device_id / web_id / fp
+# in the admin panel. `tools/doubao-extract.js` reads all four from a local
+# Doubao install (the client locks the active profile's cookie DB, so it must be
+# closed first, or pass --kill). The upstream treats an unknown device as a risk
+# signal, so the gateway never synthesizes these values.
+#
+# [[providers]]
 # kind = "trae"
 # region = "cn"
 # enabled = true

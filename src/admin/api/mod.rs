@@ -949,16 +949,81 @@ pub async fn refresh_quota(State(state): State<AdminState>, Path(id): Path<Strin
         Ok(account) => account,
         Err(error) => return json_error(&error),
     };
-    let context = match state.accounts.authorization_context(&id).await {
-        Ok(context) => context,
+    match refresh_quota_for(&state, &account).await {
+        Ok(snapshot) => {
+            json_ok(json!({"quota": snapshot, "unknown": snapshot.remaining.is_none()}))
+        }
+        Err(error) => json_error(&error),
+    }
+}
+
+/// One-click quota refresh for every enabled account.
+///
+/// Sequential on purpose: a manual refresh values a clean per-account result
+/// over speed, and parallel calls to one upstream invite account-level rate
+/// limits. A provider failure is stored as an error snapshot (same contract as
+/// the single-account endpoint) and reported in `failed` instead of aborting
+/// the batch.
+pub async fn refresh_all_quotas(State(state): State<AdminState>) -> Response {
+    let accounts = match state.accounts.list().await {
+        Ok(accounts) => accounts,
         Err(error) => return json_error(&error),
     };
+    let mut items = Vec::new();
+    let mut refreshed = 0usize;
+    let mut failed = 0usize;
+    for account in accounts.into_iter().filter(|account| account.enabled) {
+        let entry = match refresh_quota_for(&state, &account).await {
+            Ok(snapshot) => {
+                if snapshot.remaining.is_none() {
+                    failed += 1;
+                } else {
+                    refreshed += 1;
+                }
+                json!({
+                    "account_id": account.id,
+                    "provider": account.provider,
+                    "kind": account.kind.as_str(),
+                    "region": account.region.as_str(),
+                    "unknown": snapshot.remaining.is_none(),
+                    "quota": snapshot,
+                })
+            }
+            Err(error) => {
+                failed += 1;
+                json!({
+                    "account_id": account.id,
+                    "provider": account.provider,
+                    "kind": account.kind.as_str(),
+                    "region": account.region.as_str(),
+                    "unknown": true,
+                    "error": error.message,
+                })
+            }
+        };
+        items.push(entry);
+    }
+    json_ok(json!({
+        "count": items.len(),
+        "refreshed": refreshed,
+        "failed": failed,
+        "items": items,
+    }))
+}
+
+/// Fetch and persist one account's quota. Provider errors become an error
+/// snapshot so the console can show why a number is missing.
+async fn refresh_quota_for(
+    state: &AdminState,
+    account: &crate::accounts::Account,
+) -> Result<QuotaSnapshot, GatewayError> {
+    let context = state.accounts.authorization_context(&account.id).await?;
     let Some(credential) = context.credential else {
-        return json_error(&GatewayError::bad_request("account has no credential"));
+        return Err(GatewayError::bad_request("account has no credential"));
     };
     let key = ProviderKey::new(account.kind, account.region);
     let Some(provider) = state.registry.get(&key) else {
-        return json_error(&GatewayError::new(
+        return Err(GatewayError::new(
             ErrorKind::NoCapacity,
             "provider is not registered",
         ));
@@ -968,20 +1033,16 @@ pub async fn refresh_quota(State(state): State<AdminState>, Path(id): Path<Strin
         credential_revision: context.credential_revision,
         ..Default::default()
     };
-    let snapshot = match provider
+    let mut snapshot = match provider
         .quota_with_context(&provider_context, &credential)
         .await
     {
-        Ok(mut snapshot) => {
-            snapshot.account_id = account.id.clone();
-            snapshot
-        }
+        Ok(snapshot) => snapshot,
         Err(error) => QuotaSnapshot::error(&account.id, error.message),
     };
-    if let Err(error) = state.storage.quota().save(&snapshot).await {
-        return json_error(&error);
-    }
-    json_ok(json!({"quota": snapshot, "unknown": snapshot.remaining.is_none()}))
+    snapshot.account_id = account.id.clone();
+    state.storage.quota().save(&snapshot).await?;
+    Ok(snapshot)
 }
 
 pub async fn account_checkins(State(state): State<AdminState>, Path(id): Path<String>) -> Response {
@@ -1426,6 +1487,83 @@ async fn load_account(state: &AdminState, id: &str) -> Result<Account, GatewayEr
         .get(id)
         .await?
         .ok_or_else(|| GatewayError::bad_request("account not found"))
+}
+
+// ---------------------------------------------------------------------------
+// Doubao session import
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct DoubaoSessionRequest {
+    /// Cookie string copied from the logged-in desktop client.
+    pub cookies: String,
+    /// Device identity from the same client. Required: the upstream treats an
+    /// unknown device as a risk signal and this gateway never invents one.
+    pub device_id: String,
+    pub web_id: String,
+    pub fp: String,
+    #[serde(default)]
+    pub ms_token: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Import a Doubao login and probe it before storing anything.
+///
+/// The probe opens one tiny stream; a rejected login is never written.
+pub async fn import_doubao_session(
+    State(state): State<AdminState>,
+    Json(request): Json<DoubaoSessionRequest>,
+) -> Response {
+    let cookies = request.cookies.trim().to_string();
+    if cookies.is_empty() {
+        return json_error(&GatewayError::bad_request(
+            "paste the Doubao cookie string (it must contain `sessionid`)",
+        ));
+    }
+    let key = ProviderKey::new(ProviderKind::Doubao, Region::Cn);
+    let Some(provider) = state.registry.get(&key) else {
+        return json_error(&GatewayError::new(
+            ErrorKind::NoCapacity,
+            "provider doubao is not enabled in the configuration; add a [[providers]] block with kind = \"doubao\" and restart",
+        ));
+    };
+    let candidate = crate::accounts::Credential::from_value(json!({
+        "cookies": cookies.clone(),
+        "device_id": request.device_id.trim(),
+        "web_id": request.web_id.trim(),
+        "fp": request.fp.trim(),
+        "ms_token": request.ms_token.clone().unwrap_or_default(),
+    }));
+    match provider.auth_status(&candidate).await {
+        Ok(crate::accounts::AuthStatus::Valid) => {}
+        Ok(status) => {
+            return json_error(&GatewayError::new(
+                ErrorKind::AuthInvalid,
+                format!("Doubao rejected this login ({})", status.as_str()),
+            ))
+        }
+        Err(error) => return json_error(&error),
+    }
+    match account::persist_doubao_session(
+        &state,
+        cookies,
+        request.device_id.trim().to_string(),
+        request.web_id.trim().to_string(),
+        request.fp.trim().to_string(),
+        request.ms_token,
+        request.name.as_deref(),
+    )
+    .await
+    {
+        Ok(account) => json_ok(json!({
+            "account_id": account.id,
+            "name": account.name,
+            "external_id": account.external_id,
+            "restart_required": true,
+        })),
+        Err(error) => json_error(&error),
+    }
 }
 
 // ---------------------------------------------------------------------------

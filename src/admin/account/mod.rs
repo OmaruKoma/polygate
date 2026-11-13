@@ -614,6 +614,119 @@ pub async fn persist_officeace_login(
     Ok(account)
 }
 
+/// Persist an imported Doubao login (cookies + the desktop's device identity).
+///
+/// Doubao has no OAuth and no refresh token: the operator copies the cookie
+/// jar and the device values out of their own logged-in client. The device
+/// identity is stored because the upstream treats an unknown device as a risk
+/// signal (measured: `710022004 rate limited`), and this gateway never invents
+/// one.
+///
+/// Identity is `doubao:cn:<hash of sessionid>`: a re-imported login with the
+/// same session rotates that row instead of creating a duplicate.
+pub async fn persist_doubao_session(
+    state: &AdminState,
+    cookies: String,
+    device_id: String,
+    web_id: String,
+    fp: String,
+    ms_token: Option<String>,
+    requested_name: Option<&str>,
+) -> Result<Account, GatewayError> {
+    let session = crate::accounts::Credential::from_value(json!({
+        "cookies": cookies.clone(),
+        "device_id": device_id.clone(),
+        "web_id": web_id.clone(),
+        "fp": fp.clone(),
+        "ms_token": ms_token.clone().unwrap_or_default(),
+    }));
+    let parsed = crate::providers::doubao::DoubaoCredential::from_credential(&session)?;
+    if let Some(missing) = parsed.missing_identity() {
+        return Err(GatewayError::bad_request(format!(
+            "Doubao import requires `{missing}`; copy it from the desktop client's \
+             request parameters instead of letting the gateway invent one"
+        )));
+    }
+    let external_id = format!("doubao:cn:{}", session_fingerprint(parsed.sessionid()));
+    let requested_name = requested_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(64).collect::<String>())
+        .unwrap_or_else(|| {
+            format!(
+                "Doubao {}",
+                parsed.device_id.chars().take(8).collect::<String>()
+            )
+        });
+    let metadata = json!({
+        "realm": "cn",
+        "auth_source": "cookie-import",
+        "device_id": parsed.device_id,
+    });
+    let secret = session;
+
+    if let Some(existing) = state
+        .accounts
+        .find_by_external(ProviderKind::Doubao, Region::Cn, &external_id)
+        .await?
+    {
+        match state
+            .accounts
+            .credentials()
+            .status(&existing.id)
+            .await?
+            .and_then(|status| status.revision)
+        {
+            Some(revision) => {
+                state
+                    .accounts
+                    .credentials()
+                    .update(&existing.id, &secret, revision)
+                    .await?;
+            }
+            None => {
+                state
+                    .accounts
+                    .credentials()
+                    .save(&existing.id, &secret)
+                    .await?;
+            }
+        }
+        let updated = state
+            .accounts
+            .update(
+                &existing.id,
+                AccountUpdate {
+                    name: Some(requested_name),
+                    metadata: Some(metadata),
+                    ..AccountUpdate::default()
+                },
+            )
+            .await?;
+        state
+            .accounts
+            .record_auth_status(&existing.id, crate::accounts::AuthStatus::Valid, None)
+            .await?;
+        return Ok(updated);
+    }
+
+    let mut request = CreateAccount::new(
+        ProviderKind::Doubao,
+        Region::Cn,
+        requested_name,
+        Some(secret.to_json().clone()),
+    );
+    request.provider = "doubao-cn".to_string();
+    request.external_id = Some(external_id);
+    request.metadata = metadata;
+    let account = state.accounts.create(request).await?;
+    state
+        .accounts
+        .record_auth_status(&account.id, crate::accounts::AuthStatus::Valid, None)
+        .await?;
+    Ok(account)
+}
+
 /// Stable, non-reversible fingerprint used only for an account identity.
 fn session_fingerprint(session: &str) -> String {
     use sha2::{Digest, Sha256};

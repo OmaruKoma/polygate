@@ -33,6 +33,7 @@ mod registry;
 mod tests;
 
 pub mod codearts;
+pub mod doubao;
 pub mod loomy;
 pub mod officeace;
 pub mod profile;
@@ -41,6 +42,7 @@ pub mod trae;
 pub mod workbuddy;
 
 pub use codearts::{ClientHeaders, CodeArtsHttp, CodeArtsProvider};
+pub use doubao::DoubaoProvider;
 pub use loomy::LoomyProvider;
 pub use officeace::OfficeAceProvider;
 pub use trae::provider::TraeProvider;
