@@ -121,6 +121,7 @@ admin ──✗──> sched/直接 SQLite/具体 Provider 请求（除 CodeArts
 | GET | `/admin/api/dashboard` | 计数、最近请求、最近签到、额度概览 |
 | GET | `/admin/api/providers` | Provider 能力/账号/凭据状态 |
 | GET | `/admin/api/models` | 现有 `ModelCatalog` 快照 |
+| POST | `/admin/api/models/refresh` | 重新发现模型并替换运行时目录（返回 `total/providers/discovered_at`），不需要重启 |
 | GET | `/admin/api/checkins` | 各账号最近签到 |
 | GET | `/admin/api/usage` | 用量汇总与最近记录 |
 | GET/POST | `/admin/api/accounts` | 列表 / 新建（当前仅 CodeArts；其他 Provider 返回 501） |

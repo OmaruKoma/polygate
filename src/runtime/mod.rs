@@ -133,12 +133,16 @@ impl Gateway {
         let checkin_scheduler = CheckinScheduler::new(checkin.clone());
         // Discovery uses the first available account per provider. Providers
         // without a usable account contribute no models (never a fake list).
-        let catalog = Arc::new(ModelCatalog::discover_with_accounts(&registry, &accounts).await);
+        // The admin panel can re-run this later through the same handle.
+        let catalog = api::CatalogHandle::new(
+            ModelCatalog::discover_with_accounts(&registry, &accounts).await,
+        );
         let state = ApiState::new(
             Arc::clone(&registry),
-            (*catalog).clone(),
+            ModelCatalog::default(),
             ApiKeyAuth::new(keys)?,
         )
+        .with_catalog_handle(catalog.clone())
         .with_router(router)
         .with_model_routes(model_routes, (*storage).clone());
 

@@ -100,7 +100,7 @@ enabled = true
         storage.clone(),
         accounts,
         registry,
-        Arc::new(ModelCatalog::new(Vec::new())),
+        crate::api::CatalogHandle::new(ModelCatalog::new(Vec::new())),
         checkin,
         Arc::clone(&secret_box),
     );
@@ -1038,6 +1038,48 @@ async fn empty_dashboard_has_zero_counts_and_no_fake_data() {
     assert_eq!(body["quota"]["known"], 0);
     assert_eq!(body["requests"]["total"], 0);
     assert!(body["checkin"]["latest"].is_null());
+
+    let (status, body) = authed_get(&harness.app, &session, "/admin/api/models").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn refreshing_models_rediscovers_and_swaps_the_catalogue() {
+    let upstream = sts_server().await;
+    let harness = harness(&upstream.base_url, 600).await;
+    // Seed a stale entry so replacement is observable: the test registry has no
+    // providers, so re-discovery must clear it.
+    harness
+        .state
+        .catalog
+        .replace(ModelCatalog::new(vec![crate::api::ModelEntry {
+            id: "stale-model".into(),
+            upstream_id: "stale-model".into(),
+            provider: crate::providers::ProviderKey::new(
+                crate::config::ProviderKind::Mock,
+                crate::config::Region::Cn,
+            ),
+            display_name: None,
+            context_window: None,
+            max_output: None,
+            supports_vision: false,
+        }]))
+        .await;
+    let (session, _) = setup(&harness.app).await;
+
+    let (status, body) = authed(
+        &harness.app,
+        &session,
+        Method::POST,
+        "/admin/api/models/refresh",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 0);
+    assert!(body["providers"].as_array().unwrap().is_empty());
+    assert!(body["discovered_at"].is_string());
 
     let (status, body) = authed_get(&harness.app, &session, "/admin/api/models").await;
     assert_eq!(status, StatusCode::OK);

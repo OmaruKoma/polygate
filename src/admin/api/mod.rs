@@ -292,9 +292,9 @@ async fn providers_body(state: &AdminState) -> Result<Value, GatewayError> {
 }
 
 pub async fn models(State(state): State<AdminState>) -> Response {
-    let discovered_at = state.catalog.discovered_at();
-    let items: Vec<Value> = state
-        .catalog
+    let catalog = state.catalog.current().await;
+    let discovered_at = catalog.discovered_at();
+    let items: Vec<Value> = catalog
         .entries()
         .iter()
         .map(|entry| {
@@ -314,6 +314,40 @@ pub async fn models(State(state): State<AdminState>) -> Response {
     json_ok(json!({"items": items, "discovered_at": discovered_at}))
 }
 
+/// Re-run discovery for every enabled provider and swap the catalogue.
+///
+/// Startup discovery is a single shot: a provider whose credential expired
+/// while the process was down contributes no models, and only a restart fixed
+/// it before. The admin panel calls this instead.
+pub async fn refresh_models(State(state): State<AdminState>) -> Response {
+    let catalog =
+        crate::api::ModelCatalog::discover_with_accounts(&state.registry, &state.accounts).await;
+    let mut providers: Vec<Value> = Vec::new();
+    for info in state.registry.list_enabled() {
+        let key = info.key();
+        let count = catalog
+            .entries()
+            .iter()
+            .filter(|entry| entry.provider == key)
+            .count();
+        if count > 0 {
+            providers.push(json!({
+                "provider": info.id,
+                "kind": key.kind.as_str(),
+                "region": key.region.as_str(),
+                "models": count,
+            }));
+        }
+    }
+    let total = catalog.len();
+    let upgraded = state.catalog.replace(catalog).await;
+    json_ok(json!({
+        "total": total,
+        "providers": providers,
+        "discovered_at": upgraded.discovered_at(),
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // Model aliases / routes
 // ---------------------------------------------------------------------------
@@ -326,11 +360,11 @@ pub async fn model_routes(State(state): State<AdminState>) -> Response {
 }
 
 async fn model_routes_body(state: &AdminState) -> Result<Value, GatewayError> {
+    let catalog = state.catalog.current().await;
     let aliases = crate::model_service::list_aliases(&state.storage, &state.registry).await?;
     // Grouped by provider (then model id) so the console lists one upstream's
     // models together instead of interleaving whatever order discovery used.
-    let mut native: Vec<(String, String, Value)> = state
-        .catalog
+    let mut native: Vec<(String, String, Value)> = catalog
         .entries()
         .iter()
         .map(|entry| {
@@ -369,7 +403,7 @@ async fn model_routes_body(state: &AdminState) -> Result<Value, GatewayError> {
     Ok(json!({
         "aliases": aliases,
         "native": native,
-        "discovered_at": state.catalog.discovered_at(),
+        "discovered_at": catalog.discovered_at(),
     }))
 }
 
@@ -392,10 +426,11 @@ pub async fn create_model_route(
     State(state): State<AdminState>,
     Json(request): Json<CreateModelRouteRequest>,
 ) -> Response {
+    let catalog = state.catalog.current().await;
     match crate::model_service::create_target(
         &state.storage,
         &state.registry,
-        &state.catalog,
+        &catalog,
         crate::model_service::NewTarget {
             alias: request.alias,
             provider: request.provider,

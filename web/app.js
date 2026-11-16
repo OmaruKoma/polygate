@@ -1024,6 +1024,7 @@
         <h2>模型别名</h2>
         <div class="topbar-actions">
           <span class="muted">${data.discovered_at ? `目录发现于 ${fmtDate(data.discovered_at)}` : "尚未发现模型"}</span>
+          <button class="btn ghost small" id="model-refresh">刷新模型</button>
           <button class="btn primary small" id="model-add" ${providerIds.length ? "" : "disabled"}>新建别名</button>
         </div>
       </div>
@@ -1068,7 +1069,7 @@
             .join("")}
         </tbody></table></div>`
         : `<div class="empty"><strong>尚无别名</strong>建立别名后可以按优先级/权重在多个 Provider 之间路由。</div>`}
-      <div class="section-head"><h2>原生模型</h2><span class="muted">启动时从已启用 Provider 发现</span></div>
+      <div class="section-head"><h2>原生模型</h2><span class="muted">从已启用 Provider 发现，可手动刷新</span></div>
       ${native.length
         ? `<div class="table-wrap"><table><thead><tr><th>模型 ID</th><th>上下文</th><th>可用</th></tr></thead><tbody>
           ${nativeGroups(native)
@@ -1089,7 +1090,7 @@
             )
             .join("")}
         </tbody></table></div>`
-        : `<div class="empty"><strong>尚未发现模型</strong>模型目录在启动时从已启用且有可用账号的 Provider 读取。</div>`}`;
+        : `<div class="empty"><strong>尚未发现模型</strong>模型目录从已启用且有可用账号的 Provider 读取；点击「刷新模型」可重新发现，无需重启。</div>`}`;
 
     const targets = aliases.flatMap((alias) =>
       alias.targets.map((target) => ({ ...target, alias: alias.alias })),
@@ -1097,6 +1098,22 @@
 
     $("#model-add")?.addEventListener("click", () => {
       openModelCreate(native, providerIds);
+    });
+    $("#model-refresh")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = "发现中…";
+      try {
+        const result = await api("/admin/api/models/refresh", { method: "POST" });
+        const providers = (result.providers || []).length;
+        toast(`已刷新：${result.total} 个模型 / ${providers} 个 Provider`, "ok");
+        renderRoute();
+      } catch (error) {
+        toast(error.message, "error");
+      } finally {
+        button.disabled = false;
+        button.textContent = "刷新模型";
+      }
     });
     $$("[data-toggle]").forEach((button) =>
       button.addEventListener("click", async () => {

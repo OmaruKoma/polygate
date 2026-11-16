@@ -52,7 +52,7 @@ use crate::session_service::{RouteLease, SessionKey, SessionRouter};
 use logging::{observing_stream, LogContext};
 use wire::WireRequest;
 
-pub use catalog::{ModelCatalog, ModelEntry};
+pub use catalog::{CatalogHandle, ModelCatalog, ModelEntry};
 pub use openai::ChatCompletionRequest;
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,8 @@ fn presented_key(headers: &HeaderMap) -> Option<&str> {
 #[derive(Clone)]
 pub struct ApiState {
     registry: Arc<ProviderRegistry>,
-    catalog: Arc<ModelCatalog>,
+    /// Swappable so the admin panel can re-run discovery without a restart.
+    catalog: CatalogHandle,
     auth: Arc<ApiKeyAuth>,
     router: Option<SessionRouter>,
     /// Persisted model aliases. Without it only native catalogue ids resolve.
@@ -141,12 +142,18 @@ impl ApiState {
     pub fn new(registry: Arc<ProviderRegistry>, catalog: ModelCatalog, auth: ApiKeyAuth) -> Self {
         Self {
             registry,
-            catalog: Arc::new(catalog),
+            catalog: CatalogHandle::new(catalog),
             auth: Arc::new(auth),
             router: None,
             routes: None,
             storage: None,
         }
+    }
+
+    /// Share one catalogue with the admin panel, which owns the refresh button.
+    pub fn with_catalog_handle(mut self, catalog: CatalogHandle) -> Self {
+        self.catalog = catalog;
+        self
     }
 
     /// Attach account routing. Without it, chat calls still use a placeholder
@@ -235,7 +242,8 @@ async fn list_models(State(state): State<ApiState>) -> Response {
             }
         }
     }
-    for entry in state.catalog.enabled(&state.registry) {
+    let catalog = state.catalog.current().await;
+    for entry in catalog.enabled(&state.registry) {
         let Some(provider) = state.registry.get(&entry.provider) else {
             continue;
         };
@@ -385,22 +393,23 @@ async fn resolve_model(
 ) -> Result<ResolvedModel, GatewayError> {
     match &state.routes {
         Some(service) => {
+            let catalog = state.catalog.current().await;
             service
-                .resolve(&state.registry, &state.catalog, name, needs)
+                .resolve(&state.registry, &catalog, name, needs)
                 .await
         }
-        None => legacy_resolve(state, name, needs),
+        None => legacy_resolve(state, name, needs).await,
     }
 }
 
 /// Pre-alias behaviour for API tests that build `ApiState` without storage.
-fn legacy_resolve(
+async fn legacy_resolve(
     state: &ApiState,
     name: &str,
     needs: RouteNeeds,
 ) -> Result<ResolvedModel, GatewayError> {
-    let entry = state
-        .catalog
+    let catalog = state.catalog.current().await;
+    let entry = catalog
         .resolve(&state.registry, name.trim())
         .ok_or_else(|| {
             GatewayError::model_unavailable(format!("model `{name}` is not available"))

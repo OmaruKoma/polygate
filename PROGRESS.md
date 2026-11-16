@@ -6155,3 +6155,21 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   官方客户端选中 DeepSeek V4.1 Flash 后，问「你是谁」同样回答「我是豆包，你在豆包办公模式里的 AI 助手…」，
   这是上游 persona；响应里 `model_id` 恒为 38、`mode_downgrade_reason` 对伪造 key 也是 `success`，
   因此响应体无法区分后端模型。网关侧只按账号菜单下发的实测 key 维护名单。
+
+### 98. 运行时刷新模型目录（2026-11-16）
+
+- 问题：目录发现只在启动时跑一次（`ModelCatalog::discover_with_accounts`）。CodeArts 的 STS
+  token 约 2 小时过期，进程启动时若 token 已死，`auth_status_with_context` 换新失败就让整个
+  provider 掉出目录；`codearts-cn::<model>` 全部 404，只能重启，而重启不一定赶上 token 刷新窗口。
+- 改动：
+  - `api::CatalogHandle`（`Arc<RwLock<Arc<ModelCatalog>>>`）：`ApiState` / `AdminState` 共用，
+    读路径先克隆内层 `Arc` 再 await，锁不跨 await，`legacy_resolve` 改为 async。
+  - `POST /admin/api/models/refresh`：重跑发现并原地替换目录，返回 `total` / `providers` / `discovered_at`。
+  - 管理台「模型管理」页新增「刷新模型」按钮，完成后 toast 汇总并重绘列表。
+- 验证：
+  - 827→828 tests（新增 `refreshing_models_rediscovers_and_swaps_the_catalogue`），fmt/clippy 通过。
+  - 本机临时实例（mock provider）实跑：`setup → POST /admin/api/models/refresh` 返回
+    `{"total":2,"providers":[{"provider":"mock-cn","models":2}],...}`，随后 `GET /admin/api/models` 同步更新。
+  - 交叉编译 aarch64-musl 部署路由器（备份 `polygate.bak-20261116-refresh`）；
+    未带会话请求返回 `401 admin_auth_required`（路由已注册），`/admin/static/app.js` 内含「刷新模型」与
+    `/admin/api/models/refresh`。顺带确认重启后 codearts-cn 12 条、codearts-intl 3 条模型回归。

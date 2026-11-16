@@ -34,7 +34,6 @@ use rust_embed::RustEmbed;
 use serde_json::json;
 
 use crate::account_service::AccountService;
-use crate::api::ModelCatalog;
 use crate::checkin::CheckinService;
 use crate::config::Config;
 use crate::error::GatewayError;
@@ -133,7 +132,7 @@ pub struct AdminState {
     pub storage: Storage,
     pub accounts: AccountService,
     pub registry: Arc<ProviderRegistry>,
-    pub catalog: Arc<ModelCatalog>,
+    pub catalog: crate::api::CatalogHandle,
     pub checkin: CheckinService,
     pub secret_box: Arc<SecretBox>,
     pub settings: Arc<AdminSettings>,
@@ -223,7 +222,7 @@ impl AdminState {
         storage: Storage,
         accounts: AccountService,
         registry: Arc<ProviderRegistry>,
-        catalog: Arc<ModelCatalog>,
+        catalog: crate::api::CatalogHandle,
         checkin: CheckinService,
         secret_box: Arc<SecretBox>,
     ) -> Self {
@@ -285,6 +284,7 @@ pub fn router(state: AdminState) -> Router {
         .route("/admin/api/dashboard", get(api::dashboard))
         .route("/admin/api/providers", get(api::providers))
         .route("/admin/api/models", get(api::models))
+        .route("/admin/api/models/refresh", post(api::refresh_models))
         .route(
             "/admin/api/model-routes",
             get(api::model_routes).post(api::create_model_route),

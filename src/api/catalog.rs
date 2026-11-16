@@ -9,6 +9,10 @@
 //! report a discovery error (logged, entry skipped) until the account pool is
 //! wired in a later stage.
 
+use std::sync::Arc;
+
+use tokio::sync::RwLock;
+
 use crate::account_service::AccountService;
 use crate::accounts::Credential;
 use crate::config::ProviderKind;
@@ -225,5 +229,31 @@ impl ModelCatalog {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+/// Shared catalogue that can be replaced at runtime.
+///
+/// Discovery runs once at startup, but a provider can be missing its models
+/// then for a recoverable reason (an STS token that expired while the process
+/// was down). The admin panel re-runs discovery through this handle instead of
+/// requiring a restart; readers clone the inner `Arc` so the lock is never held
+/// across an await.
+#[derive(Clone)]
+pub struct CatalogHandle(Arc<RwLock<Arc<ModelCatalog>>>);
+
+impl CatalogHandle {
+    pub fn new(catalog: ModelCatalog) -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(catalog))))
+    }
+
+    pub async fn current(&self) -> Arc<ModelCatalog> {
+        Arc::clone(&*self.0.read().await)
+    }
+
+    pub async fn replace(&self, catalog: ModelCatalog) -> Arc<ModelCatalog> {
+        let next = Arc::new(catalog);
+        *self.0.write().await = Arc::clone(&next);
+        next
     }
 }
