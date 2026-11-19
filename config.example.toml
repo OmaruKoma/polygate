@@ -240,6 +240,7 @@ name = "Mock (development)"
 #   [providers.options]
 #   "model.context" = "1000000"
 #   "model.max_output" = "65536"       # optional
+#   "model.extra" = "chat-lite"        # ids served but not listed upstream
 #
 # [[providers]]
 # kind = "trae"

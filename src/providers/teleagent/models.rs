@@ -24,12 +24,15 @@ pub struct Limits {
 }
 
 pub fn parse_catalog(value: &Value) -> Result<Vec<UpstreamModel>, GatewayError> {
-    parse_catalog_with(value, Limits::default())
+    parse_catalog_with(value, Limits::default(), &[])
 }
 
+/// `extra` lists ids the upstream serves but does not advertise (measured:
+/// `chat-lite` answers 200 while `/model-options` omits it).
 pub fn parse_catalog_with(
     value: &Value,
     limits: Limits,
+    extra: &[String],
 ) -> Result<Vec<UpstreamModel>, GatewayError> {
     let items = value
         .pointer("/data/models")
@@ -74,6 +77,17 @@ pub fn parse_catalog_with(
             model.context_window = upstream;
             model.max_output = limits.max_output;
         }
+        models.push(model);
+    }
+
+    for id in extra {
+        let id = id.trim();
+        if id.is_empty() || models.iter().any(|model| model.id == id) {
+            continue;
+        }
+        let mut model = UpstreamModel::new(id);
+        model.context_window = limits.context;
+        model.max_output = limits.max_output;
         models.push(model);
     }
 
@@ -129,6 +143,7 @@ mod tests {
                 context: Some(1_000_000),
                 max_output: None,
             },
+            &[],
         )
         .expect("catalogue");
         for model in &models {
@@ -146,10 +161,32 @@ mod tests {
                 context: Some(1_000_000),
                 max_output: Some(32_000),
             },
+            &[],
         )
         .expect("catalogue");
         assert_eq!(models[0].context_window, Some(200_000));
         assert_eq!(models[0].max_output, Some(32_000));
+    }
+
+    #[test]
+    fn extra_ids_are_added_without_duplicating_the_catalogue() {
+        let models = parse_catalog_with(
+            &json!({"data": {"models": [{"model": "chat-pro", "context_limit": null}]}}),
+            Limits {
+                context: Some(1_000_000),
+                max_output: None,
+            },
+            &[
+                "chat-lite".to_string(),
+                "chat-pro".to_string(),
+                " ".to_string(),
+            ],
+        )
+        .expect("catalogue");
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "chat-pro");
+        assert_eq!(models[1].id, "chat-lite");
+        assert_eq!(models[1].context_window, Some(1_000_000));
     }
 
     #[test]

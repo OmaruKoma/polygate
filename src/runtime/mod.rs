@@ -463,7 +463,19 @@ fn build_registry(
                         client,
                     ),
                 }
-                .with_limits(limits);
+                .with_limits(limits)
+                .with_extra_models(
+                    option(provider, "model.extra")
+                        .map(|value| {
+                            value
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|id| !id.is_empty())
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                );
                 registry.register(Arc::new(teleagent))?;
             }
             ProviderKind::Workbuddy => {

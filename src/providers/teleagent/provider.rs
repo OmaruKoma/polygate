@@ -39,6 +39,7 @@ pub struct TeleagentProvider {
     http: Arc<TeleagentHttp>,
     stream_idle: std::time::Duration,
     limits: Limits,
+    extra_models: Vec<String>,
 }
 
 impl std::fmt::Debug for TeleagentProvider {
@@ -96,6 +97,7 @@ impl TeleagentProvider {
             http: Arc::new(http),
             stream_idle: STREAM_IDLE_TIMEOUT,
             limits: Limits::default(),
+            extra_models: Vec::new(),
         }
     }
 
@@ -103,6 +105,13 @@ impl TeleagentProvider {
     /// (`model.context` / `model.max_output` provider options).
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Ids the upstream serves but leaves out of `/model-options`
+    /// (`model.extra`, comma separated).
+    pub fn with_extra_models(mut self, ids: Vec<String>) -> Self {
+        self.extra_models = ids;
         self
     }
 
@@ -173,7 +182,7 @@ impl Provider for TeleagentProvider {
     ) -> Result<Vec<UpstreamModel>, GatewayError> {
         let credential = self.credential(credential)?;
         let value = self.http.get_model_options(&credential).await?;
-        parse_catalog_with(&value, self.limits)
+        parse_catalog_with(&value, self.limits, &self.extra_models)
     }
 
     async fn quota_with_context(

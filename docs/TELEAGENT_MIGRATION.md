@@ -150,3 +150,16 @@ TeleAgent 只返回 `current_points_balance`，没有"总额"字段，所以快�
 修复：迁移 `0009_quota_remaining.sql` 增加 `remaining_value` 列并显式写入；
 旧行仍按 `limit - used` 回退读取。回归测试
 `storage::tests::quota_remaining_without_a_total_roundtrips`。
+
+## 8. 隐藏模型 `chat-lite`（2026-11-19 实测）
+
+- `/model-options` 只列 `chat-pro` / `chat-flagship` / `chat-flash`，但上游**接受**
+  `chat-lite`：直接 `POST /chat/completions` 带 `{"model":"chat-lite"}` 返回 200
+  （`matched_stop: 1`，与三个公开 id 的 `154827` 不同）。
+- 桌面端日志把它的 provider 显示为 `NewApi`，其 base URL 就是
+  `https://agent.teleai.com.cn/superCowork/sapi/api/v1`——同一个上游，只是 id 未公开。
+- 网关通过 provider 选项 `model.extra`（逗号分隔）把它补进目录：
+  `"model.extra" = "chat-lite"`。补进来的 id 只做声明，上游拒绝时照常返回
+  `model_unavailable`。
+- 注意 `X-Superagent-Sign-Version` 必须是 `v1`；填 `superagent-auth-v1` 会被上游
+  以 `40104 unsupported sign version` 拒绝（与 HMAC 里的 magic 字符串不是一回事）。
