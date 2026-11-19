@@ -197,7 +197,8 @@
 - **设备身份**：`deviceId` / `installId` 从客户端 `device-meta.json` 导入；实测上游不校验
   （任意 UUID 都能过），网关既不生成也不伪造。
 - **模型**：`GET /model-options` 实时发现，实测 `chat-pro` / `chat-flagship` / `chat-flash`。
-  `context_limit` 上游恒为 `null`，只有 `chat-pro` 用文档值（400k / 64k）。
+  `context_limit` 上游恒为 `null`，只有 `chat-pro` 用文档值（400k / 64k）；操作者可用 provider 选项 `model.context` / `model.max_output` 覆盖（仅用于展示与
+  请求预算，上游并不回报），例如桌面端把上下文调成 1M 时设 `"model.context" = "1000000"`。
 - **额度**：`GET /superCowork/sapi/user/portal/companyStore/userCenter` 的
   `current_points_balance`（字符串）→ credits；无总额字段，`total = null`，不估算。
 - **签到**：福利社每日 100 积分。`GET /companyStore/v3/checkDayTask` 读卡片状态

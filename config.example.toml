@@ -231,6 +231,14 @@ name = "Mock (development)"
 # device-meta.json. Model calls carry a two-step HMAC signature; the adapter
 # signs the exact bytes it sends.
 #
+# `/model-options` reports `context_limit: null` for every model. Declare the
+# window the operator's client is configured for; it is only advertised, the
+# upstream does not confirm it:
+#
+#   [providers.options]
+#   "model.context" = "1000000"
+#   "model.max_output" = "65536"       # optional
+#
 # [[providers]]
 # kind = "trae"
 # region = "cn"

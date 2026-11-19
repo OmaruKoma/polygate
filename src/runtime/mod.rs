@@ -443,6 +443,10 @@ fn build_registry(
                     .tcp_keepalive(std::time::Duration::from_secs(15))
                     .build()
                     .unwrap_or_default();
+                let limits = crate::providers::teleagent::models::Limits {
+                    context: option(provider, "model.context").and_then(|v| v.parse().ok()),
+                    max_output: option(provider, "model.max_output").and_then(|v| v.parse().ok()),
+                };
                 let teleagent = match provider.base_url.as_deref() {
                     Some(base) => TeleagentProvider::with_base(
                         provider.provider_id(),
@@ -457,7 +461,8 @@ fn build_registry(
                         provider.verification(),
                         client,
                     ),
-                };
+                }
+                .with_limits(limits);
                 registry.register(Arc::new(teleagent))?;
             }
             ProviderKind::Workbuddy => {

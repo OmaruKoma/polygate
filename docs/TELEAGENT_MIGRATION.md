@@ -107,6 +107,8 @@ verification = "experimental"
 - **令牌 7 天过期，没有 refresh token**：上游返回 `40108` 时重新导入；
 - `deviceId` / `installId` 上游不校验，但仍按客户端行为原样转发；
 - `model-options` 的 `context_limit` 恒为 `null`，只有 `chat-pro` 用文档值（400k/64k）；
+  桌面端 `preset-context.json` 的 `contextLength`（如 1000000）是**客户端设置**，上游不回报；
+  网关用 provider 选项 `model.context` / `model.max_output` 承接操作者声明；
 - 模型自述会被上游 persona 包装（实测 `chat-pro` 回答自己是 GLM），不能靠自述判断后端；
 - 错误码：`4001` 缺/无效 `X-Token`、`40101` 缺签名头、`40107` 缺用户身份、
   `40108` 令牌无效（见 `docs/TELEAGENT_MIGRATION.md` §12 的完整表）。

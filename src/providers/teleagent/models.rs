@@ -3,7 +3,8 @@
 //! Evidence: `docs/TELEAGENT_MIGRATION.md` §3. `GET /model-options` answers
 //! `{"code":0,"data":{"models":[{"model":"chat-pro", …}]}}` with a display
 //! name, a description and a `points_multiplier`; `context_limit` is `null` for
-//! every entry, so only the documented chat-pro figures are filled in.
+//! every entry, so only the documented chat-pro figures are filled in unless
+//! the operator declares a window (`model.context` provider option).
 //!
 //! Ids are used verbatim upstream (`chat-pro` / `chat-flagship` / `chat-flash`).
 
@@ -14,7 +15,22 @@ use crate::providers::UpstreamModel;
 
 use super::region;
 
+/// Operator-declared limits for models whose upstream entry is `null`
+/// (`model.context` / `model.max_output` in the provider options).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Limits {
+    pub context: Option<u64>,
+    pub max_output: Option<u64>,
+}
+
 pub fn parse_catalog(value: &Value) -> Result<Vec<UpstreamModel>, GatewayError> {
+    parse_catalog_with(value, Limits::default())
+}
+
+pub fn parse_catalog_with(
+    value: &Value,
+    limits: Limits,
+) -> Result<Vec<UpstreamModel>, GatewayError> {
     let items = value
         .pointer("/data/models")
         .and_then(Value::as_array)
@@ -45,10 +61,18 @@ pub fn parse_catalog(value: &Value) -> Result<Vec<UpstreamModel>, GatewayError> 
         if let Some(name) = display_name {
             model = model.with_display_name(name);
         }
-        model.context_window = item.get("context_limit").and_then(Value::as_u64);
-        if id == "chat-pro" && model.context_window.is_none() {
-            model.context_window = Some(region::CHAT_PRO_CONTEXT);
-            model.max_output = Some(region::CHAT_PRO_MAX_OUTPUT);
+        let upstream = item.get("context_limit").and_then(Value::as_u64);
+        if upstream.is_none() {
+            let documented = if id == "chat-pro" {
+                Some((region::CHAT_PRO_CONTEXT, region::CHAT_PRO_MAX_OUTPUT))
+            } else {
+                None
+            };
+            model.context_window = limits.context.or(documented.map(|(ctx, _)| ctx));
+            model.max_output = limits.max_output.or(documented.map(|(_, out)| out));
+        } else {
+            model.context_window = upstream;
+            model.max_output = limits.max_output;
         }
         models.push(model);
     }
@@ -86,6 +110,46 @@ mod tests {
         assert_eq!(models[0].max_output, Some(64_000));
         assert_eq!(models[1].id, "chat-flash");
         assert_eq!(models[1].context_window, None);
+    }
+
+    #[test]
+    fn an_operator_limit_wins_over_the_documented_window() {
+        let models = parse_catalog_with(
+            &json!({
+                "code": 0,
+                "data": {
+                    "models": [
+                        {"model": "chat-pro", "context_limit": null},
+                        {"model": "chat-flagship", "context_limit": null},
+                        {"model": "chat-flash", "context_limit": null}
+                    ]
+                }
+            }),
+            Limits {
+                context: Some(1_000_000),
+                max_output: None,
+            },
+        )
+        .expect("catalogue");
+        for model in &models {
+            assert_eq!(model.context_window, Some(1_000_000), "{}", model.id);
+        }
+        assert_eq!(models[0].max_output, Some(64_000));
+        assert_eq!(models[1].max_output, None);
+    }
+
+    #[test]
+    fn an_upstream_limit_is_not_overridden() {
+        let models = parse_catalog_with(
+            &json!({"data": {"models": [{"model": "chat-pro", "context_limit": 200000}]}}),
+            Limits {
+                context: Some(1_000_000),
+                max_output: Some(32_000),
+            },
+        )
+        .expect("catalogue");
+        assert_eq!(models[0].context_window, Some(200_000));
+        assert_eq!(models[0].max_output, Some(32_000));
     }
 
     #[test]

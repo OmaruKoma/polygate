@@ -28,7 +28,7 @@ use super::convert;
 use super::credential::TeleagentCredential;
 use super::events::{parse_frame, Frame, SseDecoder, StreamTranslator};
 use super::http::TeleagentHttp;
-use super::models::parse_catalog;
+use super::models::{parse_catalog_with, Limits};
 use super::quota::parse_user_center;
 
 /// A stream that produces no bytes for this long is treated as interrupted.
@@ -38,6 +38,7 @@ pub struct TeleagentProvider {
     info: ProviderInfo,
     http: Arc<TeleagentHttp>,
     stream_idle: std::time::Duration,
+    limits: Limits,
 }
 
 impl std::fmt::Debug for TeleagentProvider {
@@ -94,7 +95,15 @@ impl TeleagentProvider {
             info,
             http: Arc::new(http),
             stream_idle: STREAM_IDLE_TIMEOUT,
+            limits: Limits::default(),
         }
+    }
+
+    /// Operator-declared window for models the upstream lists as `null`
+    /// (`model.context` / `model.max_output` provider options).
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
     fn credential(&self, credential: &Credential) -> Result<TeleagentCredential, GatewayError> {
@@ -164,7 +173,7 @@ impl Provider for TeleagentProvider {
     ) -> Result<Vec<UpstreamModel>, GatewayError> {
         let credential = self.credential(credential)?;
         let value = self.http.get_model_options(&credential).await?;
-        parse_catalog(&value)
+        parse_catalog_with(&value, self.limits)
     }
 
     async fn quota_with_context(

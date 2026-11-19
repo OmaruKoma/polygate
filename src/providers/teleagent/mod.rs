@@ -18,7 +18,7 @@ mod convert;
 pub mod credential;
 mod events;
 pub mod http;
-mod models;
+pub mod models;
 pub mod provider;
 mod quota;
 pub mod region;
