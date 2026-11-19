@@ -79,6 +79,19 @@
       cnLoginOnly: true,
       regionHint: "Loomy 只有中国站一个部署，站点固定为 CN。",
     },
+    teleagent: {
+      label: "TeleAgent",
+      authPath: "teleagent",
+      siteNote:
+        "TeleAgent（中国电信星辰）没有浏览器授权入口：登录令牌是桌面端 token.json 里的 <租户>:<JWT>（约 7 天有效、无刷新令牌）。PolyGate 只保存这个令牌与设备标识，不保存手机号或密码，也不生成设备身份。",
+      startLabel: "导入令牌",
+      successToast: "TeleAgent 账号已导入",
+      supportsCheckin: false,
+      tokenImport: true,
+      sessionPath: "teleagent",
+      cnLoginOnly: true,
+      regionHint: "TeleAgent 只有 agent.teleai.com.cn 一个部署，站点固定为 CN。",
+    },
     officeace: {
       label: "OfficeAce",
       authPath: "officeace",
@@ -632,6 +645,12 @@
              <label>fp（必需）<input id="flow-fp" spellcheck="false" placeholder="桌面端请求参数里的 fp"></label>
              <p class="hint">这三个设备参数必须来自你自己的登录：上游会把陌生设备当成风控信号（710022004），PolyGate 不会替你生成。</p>`
           : ""}
+        ${provider.tokenImport
+          ? `<label>登录令牌<textarea id="flow-token" rows="3" spellcheck="false" placeholder="Em9xR4:eyJhbGciOi..."></textarea></label>
+             <label>deviceId（可选）<input id="flow-ta-device" spellcheck="false" placeholder="device-meta.json 的 deviceId"></label>
+             <label>installId（可选）<input id="flow-ta-install" spellcheck="false" placeholder="device-meta.json 的 installId"></label>
+             <p class="hint">令牌在 <code>~/.local/share/TeleAgent/users/v1_public_*/app-auth/token.json</code>（v10 加密），可用 tools/teleagent-extract.cmd 一键导出。上游实测不校验设备标识，但客户端会携带，建议一并导入。</p>`
+          : ""}
         ${provider.needsDeviceIds
           ? `<label>machineId（32 位十六进制）<input id="flow-machine" maxlength="32" spellcheck="false" placeholder="与登录浏览器一致的 machineId"></label>
              <label>deviceId（32 位十六进制）<input id="flow-device" maxlength="32" spellcheck="false" placeholder="与登录浏览器一致的 deviceId"></label>
@@ -724,11 +743,43 @@
     }
   }
 
+  async function importTokenLogin(modal, provider) {
+    const status = $("#flow-status", modal);
+    const token = $("#flow-token", modal).value.trim();
+    const deviceId = $("#flow-ta-device", modal).value.trim();
+    const installId = $("#flow-ta-install", modal).value.trim();
+    const name = $("#flow-name", modal).value.trim();
+    if (!token.includes(":") || token.split(".").length < 3 || /\s/.test(token)) {
+      status.textContent = "令牌格式不对：应为 <租户>:<JWT>，一整行、不含空格。";
+      return;
+    }
+    status.textContent = `正在向 ${provider.label} 校验令牌…`;
+    try {
+      const result = await api(`/admin/api/auth/${provider.sessionPath}/session`, {
+        method: "POST",
+        body: JSON.stringify({
+          token,
+          device_id: deviceId || null,
+          install_id: installId || null,
+          name: name || null,
+        }),
+      });
+      toast(`${provider.successToast}${importedSessionSummary(result)}`, "ok");
+      closeModal();
+      renderRoute();
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  }
+
   async function startAuthFlow(modal) {
     const provider = modal.provider || PROVIDERS[state.provider] || PROVIDERS.codearts;
     const status = $("#flow-status", modal);
     if (provider.cookieImport) {
       return importCookieLogin(modal, provider);
+    }
+    if (provider.tokenImport) {
+      return importTokenLogin(modal, provider);
     }
     if (provider.sessionImport) {
       return importSession(modal, provider);

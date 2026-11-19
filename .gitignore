@@ -16,3 +16,4 @@ web/dist
 
 # Extracted Doubao login material (cookies + device identity); never commit.
 tools/doubao-account*.json
+tools/teleagent-account*.json

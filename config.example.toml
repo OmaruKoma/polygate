@@ -221,6 +221,17 @@ name = "Mock (development)"
 # signal, so the gateway never synthesizes these values.
 #
 # [[providers]]
+# kind = "teleagent"
+# region = "cn"                       # the only deployment; "intl" is rejected
+# enabled = true
+#
+# No OAuth: import the desktop client's `<tenant>:<JWT>` token (about 7 days,
+# no refresh token) plus its deviceId / installId in the admin panel.
+# `tools/teleagent-extract.js` decrypts token.json (v10 / DPAPI) and reads
+# device-meta.json. Model calls carry a two-step HMAC signature; the adapter
+# signs the exact bytes it sends.
+#
+# [[providers]]
 # kind = "trae"
 # region = "cn"
 # enabled = true

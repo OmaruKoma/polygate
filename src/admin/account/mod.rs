@@ -736,3 +736,118 @@ fn session_fingerprint(session: &str) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+
+/// Persist an imported TeleAgent login (`<tenant>:<JWT>` + device identity).
+///
+/// TeleAgent has no OAuth and no refresh token: the operator decrypts the
+/// desktop `token.json` and copies `device-meta.json`. Identity is the tenant
+/// plus the JWT signature tail, so re-importing a fresh token for the same
+/// login rotates the row instead of creating a duplicate.
+pub async fn persist_teleagent_session(
+    state: &AdminState,
+    token: String,
+    device_id: String,
+    install_id: String,
+    app_version: Option<String>,
+    requested_name: Option<&str>,
+) -> Result<Account, GatewayError> {
+    let secret = crate::accounts::Credential::from_value(json!({
+        "token": token,
+        "device_id": device_id,
+        "install_id": install_id,
+        "app_version": app_version.unwrap_or_default(),
+    }));
+    let parsed = crate::providers::teleagent::TeleagentCredential::from_credential(&secret)?;
+    let tenant = parsed
+        .token
+        .split_once(':')
+        .map(|(tenant, _)| tenant.to_string())
+        .unwrap_or_default();
+    let external_id = format!("teleagent:cn:{}", parsed.fingerprint());
+    let expires_at = parsed.token_expiry();
+    let requested_name = requested_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(64).collect::<String>())
+        .unwrap_or_else(|| {
+            let tail = parsed.fingerprint();
+            let tail: String = tail
+                .chars()
+                .rev()
+                .take(8)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            format!("TeleAgent {tail}")
+        });
+    let metadata = json!({
+        "realm": "cn",
+        "auth_source": "token-import",
+        "tenant": tenant,
+        "device_id": parsed.device_id,
+        "install_id": parsed.install_id,
+        "expires_at": expires_at,
+    });
+
+    if let Some(existing) = state
+        .accounts
+        .find_by_external(ProviderKind::Teleagent, Region::Cn, &external_id)
+        .await?
+    {
+        match state
+            .accounts
+            .credentials()
+            .status(&existing.id)
+            .await?
+            .and_then(|status| status.revision)
+        {
+            Some(revision) => {
+                state
+                    .accounts
+                    .credentials()
+                    .update(&existing.id, &secret, revision)
+                    .await?;
+            }
+            None => {
+                state
+                    .accounts
+                    .credentials()
+                    .save(&existing.id, &secret)
+                    .await?;
+            }
+        }
+        let updated = state
+            .accounts
+            .update(
+                &existing.id,
+                AccountUpdate {
+                    name: Some(requested_name),
+                    metadata: Some(metadata),
+                    ..AccountUpdate::default()
+                },
+            )
+            .await?;
+        state
+            .accounts
+            .record_auth_status(&existing.id, crate::accounts::AuthStatus::Valid, None)
+            .await?;
+        return Ok(updated);
+    }
+
+    let mut request = CreateAccount::new(
+        ProviderKind::Teleagent,
+        Region::Cn,
+        requested_name,
+        Some(secret.to_json().clone()),
+    );
+    request.provider = "teleagent-cn".to_string();
+    request.external_id = Some(external_id);
+    request.metadata = metadata;
+    let account = state.accounts.create(request).await?;
+    state
+        .accounts
+        .record_auth_status(&account.id, crate::accounts::AuthStatus::Valid, None)
+        .await?;
+    Ok(account)
+}

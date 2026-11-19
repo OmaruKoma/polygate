@@ -6173,3 +6173,26 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   - 交叉编译 aarch64-musl 部署路由器（备份 `polygate.bak-20261116-refresh`）；
     未带会话请求返回 `401 admin_auth_required`（路由已注册），`/admin/static/app.js` 内含「刷新模型」与
     `/admin/api/models/refresh`。顺带确认重启后 codearts-cn 12 条、codearts-intl 3 条模型回归。
+
+### 99. TeleAgent（中国电信星辰）Provider（2026-11-19）
+
+- 协议来源：桌面端 3.1.0 明文 `app.asar` + Go 引擎 IDA 反编译 + 客户端内置 `llm_tap`，
+  整理为 `docs/TELEAGENT_MIGRATION.md`；上游 `agent.teleai.com.cn` 是电信自研
+  `superCowork` 网关（非 new-api），协议层兼容 OpenAI。
+- 实现：`src/providers/teleagent/`
+  - `signer.rs`：两段 HMAC-SHA256（`superagent-auth-v1`，key 为 JWT 第三段），
+    黄金向量用独立 Node 实现生成；body 哈希对**实际发送字节**计算。
+  - `http.rs`：GET 只带 `X-Token` + nonce/timestamp（实测足够），chat 带完整 `X-SA-*`。
+  - `credential.rs` / `models.rs` / `quota.rs` / `convert.rs` / `events.rs` / `provider.rs`。
+  - UA 保持 `polygate/<version>`，不冒充桌面客户端；设备标识只导入不生成。
+- 接线：`ProviderKind::Teleagent`（config）、runtime registry、admin
+  `POST /admin/api/auth/teleagent/session`（先用 `/model-options` 探测再入库）、
+  管理台「添加账号 → TeleAgent」令牌表单、`tools/teleagent-extract.{js,cmd}`。
+- 真实账号实测（2026-11-19，本机临时实例走完整链路）：
+  - 令牌提取：`tools/teleagent-extract.js` 解出 `Em9xR4:…`，到期 2026-11-26；
+  - 导入：`POST /admin/api/auth/teleagent/session` → 200，探测到 3 个模型；
+  - 目录刷新：`POST /admin/api/models/refresh` → `chat-pro` / `chat-flagship` / `chat-flash`；
+  - 对话（非流式）：`chat-pro` → 200 / 1.9s，`reasoning_content` + `content` + usage；
+  - 流式：`chat-flash` → 200，30 帧 + `[DONE]`，思维链正常；
+  - 额度：`current_points_balance = "9096.17"`（免费版）→ `known` / credits / `total = null`。
+- 门禁：862 tests 全绿（新增 34 个 teleagent 测试）、fmt/clippy 通过。

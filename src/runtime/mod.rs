@@ -42,7 +42,7 @@ use crate::providers::qoder::provider::QoderProvider;
 use crate::providers::{
     ClientHeaders, CodeArtsHttp, CodeArtsProvider, DoubaoProvider, LoomyProvider, MockConfig,
     MockProvider, MockReply, MockToolCall, OfficeAceProvider, ProviderKey, ProviderRegistry,
-    TraeProvider, UpstreamModel, WorkbuddyProvider,
+    TeleagentProvider, TraeProvider, UpstreamModel, WorkbuddyProvider,
 };
 use crate::quota::QuotaSnapshot;
 use crate::security::SecretBox;
@@ -411,6 +411,31 @@ fn build_registry(
                     ),
                 };
                 registry.register(Arc::new(doubao))?;
+            }
+            ProviderKind::Teleagent => {
+                // One deployment; a CN login is never valid anywhere else.
+                if !crate::providers::teleagent::region::supported(provider.region) {
+                    return Err(GatewayError::config(
+                        "provider teleagent has only one deployment; use region = \"cn\"",
+                    ));
+                }
+                let client = reqwest::Client::new();
+                let teleagent = match provider.base_url.as_deref() {
+                    Some(base) => TeleagentProvider::with_base(
+                        provider.provider_id(),
+                        provider.region,
+                        provider.verification(),
+                        client,
+                        base,
+                    ),
+                    None => TeleagentProvider::new(
+                        provider.provider_id(),
+                        provider.region,
+                        provider.verification(),
+                        client,
+                    ),
+                };
+                registry.register(Arc::new(teleagent))?;
             }
             ProviderKind::Workbuddy => {
                 let client = reqwest::Client::new();

@@ -1679,3 +1679,81 @@ pub async fn import_loomy_session(
         Err(error) => json_error(&error),
     }
 }
+
+// ---------------------------------------------------------------------------
+// TeleAgent session import
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct TeleagentSessionRequest {
+    /// `<tenant>:<JWT>` copied from the desktop `token.json`.
+    pub token: String,
+    #[serde(default)]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub install_id: Option<String>,
+    #[serde(default)]
+    pub app_version: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Import a TeleAgent login token and probe it before storing anything.
+///
+/// The probe is `GET /model-options`: it is read-only, so a rejected token is
+/// never written to the database. The device identity is optional because the
+/// upstream does not validate it (measured), but it is forwarded when present.
+pub async fn import_teleagent_session(
+    State(state): State<AdminState>,
+    Json(request): Json<TeleagentSessionRequest>,
+) -> Response {
+    let token = request.token.trim().to_string();
+    if token.is_empty() || token.chars().any(char::is_whitespace) {
+        return json_error(&GatewayError::bad_request(
+            "paste the `<tenant>:<JWT>` token only (one line, no spaces)",
+        ));
+    }
+    let key = ProviderKey::new(ProviderKind::Teleagent, Region::Cn);
+    let Some(provider) = state.registry.get(&key) else {
+        return json_error(&GatewayError::new(
+            ErrorKind::NoCapacity,
+            "provider teleagent is not enabled in the configuration; add a [[providers]] block with kind = \"teleagent\" and restart",
+        ));
+    };
+    let candidate = crate::accounts::Credential::from_value(json!({
+        "token": token,
+        "device_id": request.device_id.clone().unwrap_or_default(),
+        "install_id": request.install_id.clone().unwrap_or_default(),
+        "app_version": request.app_version.clone().unwrap_or_default(),
+    }));
+    let models = match provider.list_models(&candidate).await {
+        Ok(models) if !models.is_empty() => models,
+        Ok(_) => {
+            return json_error(&GatewayError::new(
+                ErrorKind::NoCapacity,
+                "TeleAgent returned an empty model catalogue for this token",
+            ))
+        }
+        Err(error) => return json_error(&error),
+    };
+    match account::persist_teleagent_session(
+        &state,
+        token,
+        request.device_id.unwrap_or_default(),
+        request.install_id.unwrap_or_default(),
+        request.app_version,
+        request.name.as_deref(),
+    )
+    .await
+    {
+        Ok(account) => json_ok(json!({
+            "account_id": account.id,
+            "name": account.name,
+            "external_id": account.external_id,
+            "models": models.len(),
+            // Discovery runs at startup; refresh it from the models page.
+            "restart_required": false,
+        })),
+        Err(error) => json_error(&error),
+    }
+}

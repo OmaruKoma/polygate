@@ -227,6 +227,7 @@ pub enum ProviderKind {
     Loomy,
     Officeace,
     Doubao,
+    Teleagent,
     Mock,
 }
 
@@ -240,6 +241,7 @@ impl ProviderKind {
             ProviderKind::Loomy => "loomy",
             ProviderKind::Officeace => "officeace",
             ProviderKind::Doubao => "doubao",
+            ProviderKind::Teleagent => "teleagent",
             ProviderKind::Mock => "mock",
         }
     }
@@ -252,6 +254,7 @@ impl ProviderKind {
             "loomy" => Some(ProviderKind::Loomy),
             "officeace" => Some(ProviderKind::Officeace),
             "doubao" => Some(ProviderKind::Doubao),
+            "teleagent" => Some(ProviderKind::Teleagent),
             "mock" => Some(ProviderKind::Mock),
             _ => None,
         }
@@ -265,6 +268,7 @@ impl ProviderKind {
             ProviderKind::Loomy => "iFlytek Loomy",
             ProviderKind::Officeace => "Huawei OfficeAce",
             ProviderKind::Doubao => "ByteDance Doubao",
+            ProviderKind::Teleagent => "China Telecom TeleAgent",
             ProviderKind::Mock => "Mock (development)",
         }
     }
