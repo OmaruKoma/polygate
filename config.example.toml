@@ -13,6 +13,8 @@ listen = "127.0.0.1:8787"
 trust_proxy = false
 request_timeout_secs = 600
 max_body_bytes = 16777216
+# Browser origins allowed to call /v1 (CORS preflight answered before the
+# API key check). Empty keeps the API same-origin only. "*" allows any page.
 cors_origins = []
 
 [database]

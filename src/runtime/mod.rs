@@ -143,6 +143,7 @@ impl Gateway {
             ApiKeyAuth::new(keys)?,
         )
         .with_catalog_handle(catalog.clone())
+        .with_cors_origins(config.server.cors_origins.clone())
         .with_router(router)
         .with_model_routes(model_routes, (*storage).clone());
 

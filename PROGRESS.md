@@ -6282,3 +6282,17 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   上游若给出真实值则不覆盖。路由器配置设 `"model.context" = "1000000"`。
 - 验证：`cargo test` 866+ 全绿、clippy 无警告；部署后 `/v1/models` 三个 TeleAgent
   模型均报 1,000,000。
+
+## §101 `/v1` 的 CORS（2026-11-19）
+
+- 现象：在 lm.ikale.io（浏览器端模型探测）里填 DDNS 地址测 PolyGate，速度很慢。
+- 定位：探测器的 `auto` 模式先用假 key 发一次跨域探测；PolyGate 当时没有任何 CORS
+  响应头，浏览器判定直连不可用，自动退到"本站代理"——浏览器 → 站点代理（境外）→
+  ddnsto 隧道 → 路由器 → 上游，跨两次国境。本机直连网关 health 127 ms、
+  `/v1/models` 138 ms，说明慢在绕路而非网关。
+- 修复：`server.cors_origins` 此前只定义了字段没人用。现在 `ApiState` 携带该列表，
+  `api::router` 在鉴权中间件**之外**套 `tower_http::cors::CorsLayer`：
+  OPTIONS 预检由它直接应答（不需要 key），允许 GET/POST/OPTIONS、
+  `authorization` / `content-type` / `accept` / `cache-control` 头，`*` 表示任意源。
+  空列表保持原行为，管理台路由不受影响。
+- 验证：4 个新测试（配置源预检、未列源无头、空配置无头、`*` 回显任意源）全绿。

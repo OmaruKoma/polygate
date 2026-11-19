@@ -928,3 +928,99 @@ async fn chat_accepts_tool_call_index_in_replayed_history() {
     let (status, _headers, body) = send(&app.app, post_chat(&body, Some(KEY))).await;
     assert_eq!(status, StatusCode::OK, "{}", text_body(&body));
 }
+
+mod cors {
+    use super::*;
+
+    async fn app_with(origins: &[&str]) -> Router {
+        let mock = Arc::new(MockProvider::new(MockConfig::default()));
+        let registry = Arc::new(ProviderRegistry::new());
+        registry.register(mock).expect("register mock");
+        let catalog = ModelCatalog::discover(&registry, &Credential::from_value(json!({}))).await;
+        let state = ApiState::new(
+            registry,
+            catalog,
+            ApiKeyAuth::new(vec![KEY.to_string()]).expect("api keys"),
+        )
+        .with_cors_origins(origins.iter().map(|o| o.to_string()).collect());
+        router(state)
+    }
+
+    fn preflight(origin: &str) -> Request<Body> {
+        Request::builder()
+            .method("OPTIONS")
+            .uri("/v1/chat/completions")
+            .header(header::ORIGIN, origin)
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "authorization,content-type",
+            )
+            .body(Body::empty())
+            .expect("request")
+    }
+
+    #[tokio::test]
+    async fn a_configured_origin_passes_preflight_without_a_key() {
+        let app = app_with(&["https://lm.ikale.io"]).await;
+        let response = app
+            .oneshot(preflight("https://lm.ikale.io"))
+            .await
+            .expect("response");
+        assert!(response.status().is_success(), "{}", response.status());
+        let allow = response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(allow, Some("https://lm.ikale.io"));
+        let headers = response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        assert!(headers.contains("authorization"), "{headers}");
+    }
+
+    #[tokio::test]
+    async fn an_unlisted_origin_gets_no_cors_header() {
+        let app = app_with(&["https://lm.ikale.io"]).await;
+        let response = app
+            .oneshot(preflight("https://evil.example"))
+            .await
+            .expect("response");
+        assert!(response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn without_configuration_the_api_stays_same_origin_only() {
+        let app = app_with(&[]).await;
+        let response = app
+            .oneshot(preflight("https://lm.ikale.io"))
+            .await
+            .expect("response");
+        assert!(response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn a_star_origin_echoes_any_caller() {
+        let app = app_with(&["*"]).await;
+        let response = app
+            .oneshot(preflight("https://anything.example"))
+            .await
+            .expect("response");
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .and_then(|v| v.to_str().ok()),
+            Some("*")
+        );
+    }
+}

@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{rejection::JsonRejection, Request, State},
-    http::{header, HeaderMap, HeaderValue},
+    http::{header, HeaderMap, HeaderValue, Method},
     middleware::{self, Next},
     response::{IntoResponse, Response, Sse},
     routing::{get, post},
@@ -38,6 +38,7 @@ use axum::{
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use uuid::Uuid;
 
 use crate::accounts::Credential;
@@ -136,6 +137,8 @@ pub struct ApiState {
     /// Persisted model aliases. Without it only native catalogue ids resolve.
     routes: Option<Arc<ModelRouteService>>,
     storage: Option<crate::storage::Storage>,
+    /// Browser origins allowed to call `/v1` from a page (`server.cors_origins`).
+    cors_origins: Vec<String>,
 }
 
 impl ApiState {
@@ -147,7 +150,15 @@ impl ApiState {
             router: None,
             routes: None,
             storage: None,
+            cors_origins: Vec::new(),
         }
+    }
+
+    /// Answer CORS preflight for the given origins instead of relying on a
+    /// same-origin proxy. `*` allows any origin; the API key is still required.
+    pub fn with_cors_origins(mut self, origins: Vec<String>) -> Self {
+        self.cors_origins = origins;
+        self
     }
 
     /// Share one catalogue with the admin panel, which owns the refresh button.
@@ -186,6 +197,7 @@ impl ApiState {
 }
 
 pub fn router(state: ApiState) -> Router {
+    let cors = cors_layer(&state.cors_origins);
     let protected = Router::new()
         .route("/v1/models", get(list_models))
         .route("/v1/chat/completions", post(chat_completions))
@@ -195,10 +207,43 @@ pub fn router(state: ApiState) -> Router {
             state.clone(),
             require_api_key,
         ));
-    Router::new()
-        .route("/health", get(health))
-        .merge(protected)
-        .with_state(state)
+    let app = Router::new().route("/health", get(health)).merge(protected);
+    // Outermost layer: `CorsLayer` answers preflight itself, so a browser
+    // probe with a dummy key never reaches `require_api_key`.
+    let app = match cors {
+        Some(layer) => app.layer(layer),
+        None => app,
+    };
+    app.with_state(state)
+}
+
+/// `None` keeps the historical same-origin-only behaviour.
+fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
+    if origins.is_empty() {
+        return None;
+    }
+    let allow = if origins.iter().any(|origin| origin.trim() == "*") {
+        AllowOrigin::any()
+    } else {
+        AllowOrigin::list(
+            origins
+                .iter()
+                .filter_map(|origin| HeaderValue::from_str(origin.trim()).ok()),
+        )
+    };
+    Some(
+        CorsLayer::new()
+            .allow_origin(allow)
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers([
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::ACCEPT,
+                header::CACHE_CONTROL,
+            ])
+            .expose_headers([header::CONTENT_TYPE])
+            .max_age(std::time::Duration::from_secs(3600)),
+    )
 }
 
 async fn require_api_key(State(state): State<ApiState>, request: Request, next: Next) -> Response {
