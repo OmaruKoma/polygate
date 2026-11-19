@@ -384,6 +384,18 @@ verification = "verified"          # 控制台徽标：verified / experimental /
 
 - **模型目录在启动时发现**：新增账号或 Provider 后需要重启网关，`/v1/models` 才会出现新模型。
   管理台会提示 `restart_required`。
+- **`provider is not registered`**：管理台探测登录态/刷新额度时出现这句，表示账号的
+  (kind, region) 在运行中的 registry 里没有对应的已启用 Provider。管理台导入账号只写
+  账号库，**不会**注册 Provider；必须在 `config.toml` 里有对应块并重启：
+
+  ```toml
+  [[providers]]
+  kind = "workbuddy"
+  region = "intl"        # 必须与账号区域一致：intl / cn 是两个独立注册项
+  enabled = true
+  ```
+
+  常见诱因：配置里没有这个块、`enabled = false`、region 与账号不一致、改完配置没重启。
 - **单实例**：调度器状态与 SQLite 写锁都在进程内，不支持多实例共享同一个数据库。
 - **图片输入**：上游目录声明 `vision` 的模型（CodeArts 2 个、Loomy 6 个）加上实测确认可读图的
   15 个未声明模型（Qoder / WorkBuddy / OfficeAce），共 23 个模型已用 64×64 纯色 PNG 实测；
