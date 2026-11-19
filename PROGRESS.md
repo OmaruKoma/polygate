@@ -6220,3 +6220,19 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   `already_checked_in`（当天已在探测阶段领过）；`GET .../quota` 从存储读出
   `remaining = 9196.15`（修复生效）。
 - 门禁：866 tests 全绿、fmt/clippy 通过。
+
+### 99.2 调用变慢的定位：不是网关也不是上游（2026-11-19）
+
+- 现象：经路由器 8787 调 TeleAgent/Qoder，偶发 TTFT 13–55 s；同一账号从本机直连上游稳定
+  1.1–1.6 s（TeleAgent，3 次对照）；一条 131 s 的 qoder 流式请求期间 `/health` 始终 1–8 ms，
+  说明网关进程没阻塞。
+- 证据：`/tmp/openclash.log` 同期大量
+  `[TCP] dial 直连 … i/o timeout`（pre-umid.alibaba-inc.com 等）与节点健康检查失败；
+  路由器 ping 223.5.5.5 0% 丢包 / 8.6 ms，ping agent.teleai.com.cn 0% 丢包 / 42.8 ms。
+  → 慢在路由器上的 OpenClash 出站路径（部分 CN 域名走代理组/直连拨号被卡），
+  不是 PolyGate 代码，也不是上游限速。
+- 排除项：把 TeleAgent 客户端钉到 HTTP/1.1 后复测，8 次里仍有 2 次 54 s，**h2 不是原因**；
+  该改动保留（SSE 走 h1 更可预期）。
+- 建议（未自动执行，属于路由器全局配置）：在 `/etc/openclash/config.yaml` 的 rules 顶部加
+  `- DOMAIN-SUFFIX,teleai.com.cn,DIRECT`（以及需要的 CN Provider 域名），让 PolyGate 的
+  CN 上游绕开代理组；或在网关侧给 reqwest 加 `connect_timeout`，让卡住的拨号快速失败。

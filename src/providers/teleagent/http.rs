@@ -146,6 +146,7 @@ impl TeleagentHttp {
         let request = self
             .client
             .get(format!("{}{}", self.base, path))
+            .version(reqwest::Version::HTTP_11)
             .headers(self.headers(credential, "application/json"))
             .timeout(Duration::from_secs(region::JSON_TIMEOUT_SECONDS));
         self.send_json(request).await
@@ -158,6 +159,7 @@ impl TeleagentHttp {
         let request = self
             .client
             .get(format!("{}{}", self.base, region::USER_CENTER_PATH))
+            .version(reqwest::Version::HTTP_11)
             .headers(self.headers(credential, "application/json"))
             .timeout(Duration::from_secs(region::JSON_TIMEOUT_SECONDS));
         self.send_json(request).await
@@ -173,6 +175,7 @@ impl TeleagentHttp {
         let request = self
             .client
             .get(format!("{}{}", self.base, path_and_query))
+            .version(reqwest::Version::HTTP_11)
             .headers(self.headers(credential, "application/json"))
             .timeout(Duration::from_secs(region::JSON_TIMEOUT_SECONDS));
         self.send_json(request).await
@@ -187,6 +190,7 @@ impl TeleagentHttp {
         let request = self
             .client
             .post(format!("{}{}", self.base, region::CHAT_PATH))
+            .version(reqwest::Version::HTTP_11)
             .headers(self.signed_headers(
                 credential,
                 "application/json",
@@ -209,6 +213,7 @@ impl TeleagentHttp {
         let response = self
             .client
             .post(format!("{}{}", self.base, region::CHAT_PATH))
+            .version(reqwest::Version::HTTP_11)
             .headers(self.signed_headers(
                 credential,
                 "text/event-stream",
