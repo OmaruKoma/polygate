@@ -15,6 +15,16 @@ pub const CHAT_PATH: &str = "/superCowork/sapi/api/v1/chat/completions";
 pub const MODEL_OPTIONS_PATH: &str = "/superCowork/sapi/api/v1/model-options";
 pub const USER_CENTER_PATH: &str = "/superCowork/sapi/user/portal/companyStore/userCenter";
 
+/// Welfare page: lists the daily-claim card with its state (`incomplete` /
+/// `completed`) and the claim URL.
+pub const DAY_TASK_PATH: &str = "/superCowork/sapi/user/portal/companyStore/v3/checkDayTask";
+/// One-time task list (`first_login`, `monthly_basic`, …). Empty once claimed.
+pub const CLAIMABLE_TASKS_PATH: &str = "/superCowork/sapi/user/portal/companyStore/checkTask";
+/// Claiming the daily 100 points. Verified live on 2026-11-19: balance
+/// 9096.17 → 9196.15 and the card flipped to `completed`.
+pub const DAILY_CLAIM_PATH: &str =
+    "/superCowork/sapi/user/portal/companyStore/checkTask?type=daily_login";
+
 /// Product-wide constant shipped inside the client. It identifies "this is a
 /// TeleAgent client"; the account identity rides on `X-Token`.
 pub const CLIENT_API_KEY: &str = "sk-qvp4m6h9g20uM6PgYP7E";

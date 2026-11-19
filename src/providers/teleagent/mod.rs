@@ -15,9 +15,9 @@
 //! re-imports it when the upstream answers `40108`.
 
 mod convert;
-mod credential;
+pub mod credential;
 mod events;
-mod http;
+pub mod http;
 mod models;
 pub mod provider;
 mod quota;

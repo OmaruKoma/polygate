@@ -12,7 +12,7 @@ use crate::quota::{QuotaSnapshot, QuotaStatus, QuotaUnit};
 use super::{decode_ts, encode_ts, limit as clamp_limit, storage_error};
 
 const COLUMNS: &str = "id, account_id, quota_group_id, model, quota_unit, used, limit_value, \
-     status, error, refreshed_at, raw";
+     remaining_value, status, error, refreshed_at, raw";
 
 #[derive(Clone)]
 pub struct QuotaRepo {
@@ -31,8 +31,8 @@ impl QuotaRepo {
         };
         let result = sqlx::query(
             "INSERT INTO quota_snapshots (account_id, quota_group_id, model, quota_unit, used, \
-             limit_value, status, error, refreshed_at, raw) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             limit_value, remaining_value, status, error, refreshed_at, raw) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&snapshot.account_id)
         .bind(&snapshot.group_id)
@@ -40,6 +40,7 @@ impl QuotaRepo {
         .bind(snapshot.unit.as_str())
         .bind(used)
         .bind(snapshot.total)
+        .bind(snapshot.remaining)
         .bind(snapshot.status.as_str())
         .bind(&snapshot.error)
         .bind(encode_ts(snapshot.refreshed_at))
@@ -110,10 +111,13 @@ fn map_snapshot(row: &sqlx::sqlite::SqliteRow) -> Result<QuotaSnapshot, GatewayE
     let raw_json: Option<String> = row.try_get("raw")?;
     let limit_value: Option<f64> = row.try_get("limit_value")?;
     let used: Option<f64> = row.try_get("used")?;
-    let remaining = match (limit_value, used) {
+    let stored_remaining: Option<f64> = row.try_get("remaining_value")?;
+    // Rows written before 0009 only carry total/used; keep the derived value as
+    // the fallback so history stays readable.
+    let remaining = stored_remaining.or(match (limit_value, used) {
         (Some(total), Some(used)) => Some(total - used),
         _ => None,
-    };
+    });
 
     Ok(QuotaSnapshot {
         account_id: row.try_get("account_id")?,

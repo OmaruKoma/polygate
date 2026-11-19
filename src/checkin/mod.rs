@@ -24,6 +24,7 @@ mod qoder;
 mod quota;
 mod scheduler;
 mod service;
+mod teleagent;
 mod trae;
 mod workbuddy;
 
@@ -47,5 +48,6 @@ pub use qoder::QoderCheckinExecutor;
 pub use quota::{MockQuotaRefreshHook, QuotaRefreshHook, QuotaRefreshRequest};
 pub use scheduler::{CheckinScheduler, Sleeper, TokioSleeper};
 pub use service::CheckinService;
+pub use teleagent::TeleagentCheckinExecutor;
 pub use trae::TraeCheckinExecutor;
 pub use workbuddy::WorkbuddyCheckinExecutor;

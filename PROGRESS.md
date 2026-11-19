@@ -6196,3 +6196,27 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   - 流式：`chat-flash` → 200，30 帧 + `[DONE]`，思维链正常；
   - 额度：`current_points_balance = "9096.17"`（免费版）→ `known` / credits / `total = null`。
 - 门禁：862 tests 全绿（新增 34 个 teleagent 测试）、fmt/clippy 通过。
+
+### 99.1 TeleAgent 额度探测修复 + 签到（2026-11-19）
+
+- **额度显示"未知"的根因**：存储层用 `limit_value - used` 反推 `remaining`。
+  TeleAgent 只有 `current_points_balance`、没有总额，写库时两列都是 NULL，
+  读回来 `remaining` 就丢了 → 管理台显示未知。
+  修复：迁移 `0009_quota_remaining.sql` 新增 `remaining_value` 并显式写读，
+  旧行仍按 `limit - used` 回退。回归测试
+  `storage::tests::quota_remaining_without_a_total_roundtrips`。
+- **签到协议**（trace `Untitled.trace` + 真实账号实测）：
+  - `GET /superCowork/sapi/user/portal/companyStore/v3/checkDayTask`
+    → `activity_data[]` 里 `action_type=api`、`jump_url` 含 `checkTask?type=` 的是签到卡；
+    `action_status` = `incomplete` / `completed`。
+  - `GET /superCowork/sapi/user/portal/companyStore/checkTask?type=daily_login` 领取；
+    实测余额 `9096.17 → 9196.15`（+100），卡片转 `completed`，幂等。
+  - `GET /superCowork/sapi/user/portal/companyStore/checkTask` 列出一次性礼包
+    （`first_login` / `monthly_basic` 各 3000），按 `task_code` best-effort 领取（未验证场景）。
+- `checkin::TeleagentCheckinExecutor`：状态探测 + 领取 + 余额差值 + 一次性礼包；
+  领取遵循仓库约定，由 `checkin.claim_enabled = true` 开启（默认关闭）。
+  管理台 TeleAgent 的「签到」按钮已启用。
+- 本机实测：导入账号 → `POST /admin/api/accounts/{id}/checkin` →
+  `already_checked_in`（当天已在探测阶段领过）；`GET .../quota` 从存储读出
+  `remaining = 9196.15`（修复生效）。
+- 门禁：866 tests 全绿、fmt/clippy 通过。

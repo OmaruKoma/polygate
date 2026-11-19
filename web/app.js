@@ -86,7 +86,7 @@
         "TeleAgent（中国电信星辰）没有浏览器授权入口：登录令牌是桌面端 token.json 里的 <租户>:<JWT>（约 7 天有效、无刷新令牌）。PolyGate 只保存这个令牌与设备标识，不保存手机号或密码，也不生成设备身份。",
       startLabel: "导入令牌",
       successToast: "TeleAgent 账号已导入",
-      supportsCheckin: false,
+      supportsCheckin: true,
       tokenImport: true,
       sessionPath: "teleagent",
       cnLoginOnly: true,

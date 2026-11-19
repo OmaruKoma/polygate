@@ -200,9 +200,14 @@
   `context_limit` 上游恒为 `null`，只有 `chat-pro` 用文档值（400k / 64k）。
 - **额度**：`GET /superCowork/sapi/user/portal/companyStore/userCenter` 的
   `current_points_balance`（字符串）→ credits；无总额字段，`total = null`，不估算。
-- **不支持**：视觉（目录无视觉模型）、会话续接、取消、签到。
-- **状态**：`experimental` —— 授权探测、模型目录、对话（流式/非流式）、额度均已用真实
-  账号实测；工具调用按 OpenAI 协议透传，未用真实账号验证。
+- **签到**：福利社每日 100 积分。`GET /companyStore/v3/checkDayTask` 读卡片状态
+  （`action_status` 为 `incomplete` / `completed`），
+  `GET /companyStore/checkTask?type=daily_login` 领取（实测余额 +100、卡片转 completed），
+  幂等；一次性礼包按 `task_code` best-effort 领取。领取由 provider 选项
+  `checkin.claim_enabled` 显式开启，未开启时只做只读探测。
+- **不支持**：视觉（目录无视觉模型）、会话续接、取消。
+- **状态**：`experimental` —— 授权探测、模型目录、对话（流式/非流式）、额度、签到均已用
+  真实账号实测；工具调用按 OpenAI 协议透传，未用真实账号验证。
 
 ## 7. 明确排除
 
@@ -239,7 +244,7 @@
 | Loomy CN | 已实现（会话导入；模型发现/Chat/SSE/额度 Live Verified 2026-10-30） | 已实现（真实账号 10 个 chat 模型） | 已实现（Live Verified；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified） | Unsupported（不做签到/领奖） | experimental（Chat/SSE/额度已实测；无 refresh，14 天需重导） |
 | OfficeAce CN | 已实现（M17；华为云 PKCE + DPoP 轮询） | 已实现（MockVerified） | 已实现（OpenAI 协议；MockVerified） | Unsupported（无原生会话） | 已实现（officeace_points 主账；MockVerified） | 已实现（每日 bonus claim；默认关闭，MockVerified） | experimental（无真实账号；V11/V4 签名已按参考向量逐字节比对） |
 | Doubao CN | 已实现（补丁流解析；Live Verified 2026-11-13） | 已实现（Live Verified；**豆包工作 5 个第三方模型为实验性**） | Unsupported（无 tool surface） | Unsupported（无原生会话） | 已实现（订阅汇总；免费账号 unknown，不写 0） | Unsupported | experimental（Chat/三档/思维链/额度已用真实登录态实测；豆包工作模型为实验性，依赖账号菜单下发 key；图片与工具不支持；设备身份必须导入） |
-| TeleAgent CN | 已实现（真实上游 Live Verified 2026-11-19） | 已实现（Live Verified） | 已实现（OpenAI 透传；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified，无总额字段） | Unsupported | experimental（令牌导入 + 两段 HMAC 签名；Chat/SSE/模型/额度均已用真实账号实测；JWT 7 天需重导） |
+| TeleAgent CN | 已实现（真实上游 Live Verified 2026-11-19） | 已实现（Live Verified） | 已实现（OpenAI 透传；工具调用未实测） | Unsupported（无原生会话） | 已实现（credits；Live Verified，无总额字段） | 已实现（福利社每日签到；Live Verified） | experimental（令牌导入 + 两段 HMAC 签名；Chat/SSE/模型/额度/签到均已用真实账号实测；JWT 7 天需重导） |
 | CodeBuddy CN | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 | CodeBuddy Intl | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | 已移除 | excluded |
 

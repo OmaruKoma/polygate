@@ -163,6 +163,21 @@ impl TeleagentHttp {
         self.send_json(request).await
     }
 
+    /// Company-store portal GET. `path_and_query` must be one of the
+    /// `region::PORTAL_*` constants — never caller-supplied text.
+    pub async fn get_portal_json(
+        &self,
+        credential: &TeleagentCredential,
+        path_and_query: &str,
+    ) -> Result<Value, GatewayError> {
+        let request = self
+            .client
+            .get(format!("{}{}", self.base, path_and_query))
+            .headers(self.headers(credential, "application/json"))
+            .timeout(Duration::from_secs(region::JSON_TIMEOUT_SECONDS));
+        self.send_json(request).await
+    }
+
     /// Signed JSON chat call. `body` is the exact byte payload that was signed.
     pub async fn post_chat_json(
         &self,

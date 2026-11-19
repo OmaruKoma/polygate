@@ -101,7 +101,7 @@ async fn empty_database_migrates_and_creates_required_tables() {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 
     let journal: String = sqlx::query_scalar("PRAGMA journal_mode")
         .fetch_one(&store.pool)
@@ -140,12 +140,12 @@ async fn migration_is_idempotent() {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(schema_rows, 8);
+    assert_eq!(schema_rows, 9);
     let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(applied, 8);
+    assert_eq!(applied, 9);
 }
 
 #[tokio::test]
@@ -386,6 +386,37 @@ async fn quota_unknown_stays_unknown() {
             .unwrap();
     assert!(used.is_none());
     assert!(limit.is_none());
+}
+
+/// Providers that report a spendable balance without a granted total must not
+/// lose it on reload (TeleAgent: `current_points_balance` only).
+#[tokio::test]
+async fn quota_remaining_without_a_total_roundtrips() {
+    let (_dir, store) = test_store().await;
+    let account = insert_account(&store, "quota-remaining-only").await;
+    let snapshot = QuotaSnapshot {
+        account_id: account.id.clone(),
+        group_id: None,
+        model: None,
+        unit: QuotaUnit::Credits,
+        total: None,
+        remaining: Some(9096.17),
+        status: QuotaStatus::Known,
+        error: None,
+        refreshed_at: Utc::now(),
+        raw: Some(serde_json::json!({"plan": "免费版"})),
+    };
+
+    store.quota().save(&snapshot).await.unwrap();
+    let loaded = store
+        .quota()
+        .latest_for_account(&account.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.status, QuotaStatus::Known);
+    assert_eq!(loaded.total, None);
+    assert_eq!(loaded.remaining, Some(9096.17));
 }
 
 #[tokio::test]

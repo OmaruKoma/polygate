@@ -552,6 +552,20 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                 }
                 routing = routing.with(ProviderKind::Qoder, provider.region, Arc::new(executor));
             }
+            ProviderKind::Teleagent => {
+                // Claims change account state, so they stay opt-in like every
+                // other adapter; the status probe itself is read-only.
+                let claim_enabled = option(provider, "checkin.claim_enabled")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+                routing = routing.with(
+                    ProviderKind::Teleagent,
+                    provider.region,
+                    Arc::new(crate::checkin::TeleagentCheckinExecutor::new(
+                        claim_enabled,
+                        reqwest::Client::new(),
+                    )),
+                );
+            }
             ProviderKind::Workbuddy => {
                 // CN only in practice; the executor itself reports `Unsupported`
                 // for Intl without sending a request. Claims stay opt-in.

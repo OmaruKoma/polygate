@@ -110,3 +110,41 @@ verification = "experimental"
 - 模型自述会被上游 persona 包装（实测 `chat-pro` 回答自己是 GLM），不能靠自述判断后端；
 - 错误码：`4001` 缺/无效 `X-Token`、`40101` 缺签名头、`40107` 缺用户身份、
   `40108` 令牌无效（见 `docs/TELEAGENT_MIGRATION.md` §12 的完整表）。
+
+## 7. 签到：福利社每日 100 积分（2026-11-19 实测）
+
+福利社页面由两个端点驱动：
+
+| 用途 | 请求 |
+| --- | --- |
+| 活动卡片状态 | `GET /superCowork/sapi/user/portal/companyStore/v3/checkDayTask` |
+| 每日签到领取 | `GET /superCowork/sapi/user/portal/companyStore/checkTask?type=daily_login` |
+| 一次性礼包列表 | `GET /superCowork/sapi/user/portal/companyStore/checkTask` |
+
+`checkDayTask` 的 `data.activity_data[]` 里，签到卡片的特征是 `action_type: "api"`
+且 `jump_url` 指向 `checkTask?type=daily_login`，状态在 `action_status`：
+
+- `incomplete` → 今天还没领；
+- `completed` → 今天已领。
+
+**实测（2026-11-19）**：对 `incomplete` 的账号请求 `checkTask?type=daily_login`，
+`userCenter` 余额从 `9096.17` 变成 `9196.15`（+100），卡片随即变成 `completed`。
+签到是幂等的 GET，`completed` 时不再发送领取请求。
+
+一次性礼包（`first_login` / `monthly_basic`，各 3000）通过
+`checkTask` 返回 `data[].task_code`；领取 URL 形状为 `checkTask?type=<task_code>`
+——**这一条未在真实账号上遇到可领取的场景**，实现为 best-effort：失败只记录不重试。
+
+领取改变账号状态，因此和仓库里其它 Provider 一致，由 provider 选项
+`checkin.claim_enabled = true` 显式开启；未开启时只做只读状态探测。
+
+## 8. 额度存储的缺陷（同日修复）
+
+TeleAgent 只返回 `current_points_balance`，没有"总额"字段，所以快照是
+`remaining = Some(…)`、`total = None`。旧存储层把 `remaining` 隐式表达成
+`limit_value - used`，这种快照写进去是两列 NULL，读出来 `remaining` 就丢了，
+管理台显示"未知"。
+
+修复：迁移 `0009_quota_remaining.sql` 增加 `remaining_value` 列并显式写入；
+旧行仍按 `limit - used` 回退读取。回归测试
+`storage::tests::quota_remaining_without_a_total_roundtrips`。
