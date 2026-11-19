@@ -38,7 +38,7 @@ use axum::{
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::accounts::Credential;
@@ -235,12 +235,10 @@ fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
         CorsLayer::new()
             .allow_origin(allow)
             .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-            .allow_headers([
-                header::AUTHORIZATION,
-                header::CONTENT_TYPE,
-                header::ACCEPT,
-                header::CACHE_CONTROL,
-            ])
+            // The origin list is the gate; the key check still applies to every
+            // call, and browser clients send vendor header names we cannot
+            // enumerate (x-api-key, anthropic-*, x-goog-api-key).
+            .allow_headers(Any)
             .expose_headers([header::CONTENT_TYPE])
             .max_age(std::time::Duration::from_secs(3600)),
     )

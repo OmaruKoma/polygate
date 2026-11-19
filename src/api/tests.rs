@@ -979,7 +979,10 @@ mod cors {
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        assert!(headers.contains("authorization"), "{headers}");
+        assert!(
+            headers == "*" || headers.contains("authorization"),
+            "{headers}"
+        );
     }
 
     #[tokio::test]
