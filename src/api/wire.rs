@@ -26,6 +26,11 @@ pub(crate) trait WireRequest {
     /// First user text, used for the automatic session id when the client did
     /// not send `x-session-id`.
     fn first_user_text(&self) -> Option<String>;
+    /// Client-declared conversation identity (`user` field, `metadata.user_id`).
+    /// Used for session affinity when no explicit session header is present.
+    fn session_hint(&self) -> Option<String> {
+        None
+    }
     /// Convert to the internal request for a specific upstream model id.
     fn to_chat_request(
         &self,

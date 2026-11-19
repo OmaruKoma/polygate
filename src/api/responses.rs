@@ -387,6 +387,14 @@ impl WireRequest for ResponsesRequest {
         }
     }
 
+    fn session_hint(&self) -> Option<String> {
+        self.user
+            .as_deref()
+            .map(str::trim)
+            .filter(|user| !user.is_empty())
+            .map(str::to_string)
+    }
+
     fn to_chat_request(
         &self,
         upstream_model: &str,

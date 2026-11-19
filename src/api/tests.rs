@@ -817,19 +817,40 @@ fn session_id_prefers_the_header_and_otherwise_uses_a_stable_prefix() {
     let request: ChatCompletionRequest =
         serde_json::from_value(chat("mock-chat", "hello", false)).expect("request");
     let headers = HeaderMap::new();
-    let first =
-        session_id_for(&headers, request.model(), request.first_user_text()).expect("auto id");
-    let second =
-        session_id_for(&headers, request.model(), request.first_user_text()).expect("auto id");
+    let first = session_id_for(&headers, request.first_user_text()).expect("auto id");
+    let second = session_id_for(&headers, request.first_user_text()).expect("auto id");
     assert_eq!(first, second);
     assert!(first.starts_with("auto-"));
 
     let mut headers = HeaderMap::new();
     headers.insert("x-session-id", "client-supplied".parse().expect("header"));
     assert_eq!(
-        session_id_for(&headers, request.model(), request.first_user_text()).as_deref(),
+        session_id_for(&headers, request.first_user_text()).as_deref(),
         Some("client-supplied")
     );
+}
+
+#[test]
+fn switching_models_keeps_the_auto_session_id() {
+    use super::session_id_for;
+
+    // Same first user message, different model: one conversation, one route.
+    let first = session_id_for(&HeaderMap::new(), Some("write a parser".into())).expect("id");
+    let second = session_id_for(&HeaderMap::new(), Some("write a parser".into())).expect("id");
+    assert_eq!(first, second);
+}
+
+#[test]
+fn the_client_declared_user_names_the_session() {
+    use super::session_id_for;
+    use super::wire::WireRequest;
+    use super::ChatCompletionRequest;
+
+    let mut body = chat("mock-chat", "hello", false);
+    body["user"] = json!("task-42");
+    let request: ChatCompletionRequest = serde_json::from_value(body).expect("request");
+    let id = session_id_for(&HeaderMap::new(), request.session_hint()).expect("id");
+    assert_eq!(id, "auto-3a3b6e433787a5fc3f15905c");
 }
 
 #[tokio::test]

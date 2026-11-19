@@ -384,6 +384,12 @@ verification = "verified"          # 控制台徽标：verified / experimental /
 
 - **模型目录在启动时发现**：新增账号或 Provider 后需要重启网关，`/v1/models` 才会出现新模型。
   管理台会提示 `restart_required`。
+- **会话亲和**：同一个任务（会话）在别名上只认一个 Provider + 一个账号，TTL 默认 24 h。
+  会话 id 依次取自 `X-Session-Id` / `X-Polygate-Session-Id` / OpenAI `user` /
+  Anthropic `metadata.user_id`，都没有时用**第一条 user 消息的哈希**——**不含模型名**，
+  所以中途换模型不会把任务挪到别的上游（否则 prompt cache 全废、人设会变）。
+  账号也一并钉住：经别名解析的请求走亲和绑定，失败重试才允许换账号。
+  代价是极长对话可能一直压在一个账号上，换账号需等 TTL 过期或让该账号失败。
 - **`provider is not registered`**：管理台探测登录态/刷新额度时出现这句，表示账号的
   (kind, region) 在运行中的 registry 里没有对应的已启用 Provider。管理台导入账号只写
   账号库，**不会**注册 Provider；必须在 `config.toml` 里有对应块并重启：

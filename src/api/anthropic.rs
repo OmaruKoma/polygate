@@ -389,6 +389,16 @@ impl WireRequest for AnthropicRequest {
         None
     }
 
+    fn session_hint(&self) -> Option<String> {
+        self.metadata
+            .as_ref()?
+            .get("user_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|user| !user.is_empty())
+            .map(str::to_string)
+    }
+
     fn to_chat_request(
         &self,
         upstream_model: &str,

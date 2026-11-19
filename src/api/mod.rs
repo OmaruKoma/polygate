@@ -530,8 +530,11 @@ async fn dispatch<W: WireRequest>(
     streaming: bool,
 ) -> Result<Response, GatewayError> {
     let started = std::time::Instant::now();
-    let session_id = session_id_for(headers, request.model(), request.first_user_text())
-        .unwrap_or_else(|| format!("auto-{}", Uuid::new_v4().simple()));
+    let session_id = session_id_for(
+        headers,
+        request.session_hint().or_else(|| request.first_user_text()),
+    )
+    .unwrap_or_else(|| format!("auto-{}", Uuid::new_v4().simple()));
     let capability = if streaming {
         Capability::Streaming
     } else {
@@ -561,7 +564,16 @@ async fn dispatch<W: WireRequest>(
             let route = match (&state.router, target.provider.kind) {
                 (Some(router), kind) if kind != ProviderKind::Mock => {
                     let key = SessionKey::new(session_id.clone(), kind, target.provider.region);
-                    match router.open_excluding(key, &excluded).await {
+                    // A conversation resolved through an alias is kept on one
+                    // provider *and* one account for the binding TTL. Picking a
+                    // different account per request throws away the upstream
+                    // prompt cache and changes quality mid-task.
+                    let opened = if resolved.is_alias {
+                        router.open_affine(key, &excluded).await
+                    } else {
+                        router.open_excluding(key, &excluded).await
+                    };
+                    match opened {
                         Ok(route) => Some(route),
                         Err(error) => {
                             // Keep the upstream failure that triggered the
@@ -867,14 +879,22 @@ fn leased_stream(inner: ChatStream, router: SessionRouter, route: RouteLease) ->
 /// Stable downstream session id: an explicit header wins; otherwise the first
 /// user message plus the public model id gives a deterministic conversation
 /// prefix (the CodeArts client has no session header of its own).
-fn session_id_for(headers: &HeaderMap, model: &str, text: Option<String>) -> Option<String> {
+/// Conversation identity for affinity.
+///
+/// The model name is deliberately **not** part of the digest: switching models
+/// in the middle of a task must not move the conversation to another provider,
+/// which would throw away the upstream prompt cache and change the persona.
+/// Without a header or a client-declared user, the first user message is the
+/// stable anchor (it does not change as the history grows).
+fn session_id_for(headers: &HeaderMap, text: Option<String>) -> Option<String> {
     if let Some(id) = crate::sessions::session_id_from_headers(headers) {
         return Some(id);
     }
     let text = text?;
-    if text.trim().is_empty() {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
         return None;
     }
-    let digest = Sha256::new_with_prefix(format!("{model}:{text}").as_bytes()).finalize();
+    let digest = Sha256::new_with_prefix(trimmed.as_bytes()).finalize();
     Some(format!("auto-{}", &hex::encode(digest)[..24]))
 }

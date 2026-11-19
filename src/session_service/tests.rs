@@ -1316,3 +1316,51 @@ async fn repeated_transient_failures_cool_an_account_down() {
         router.finish(lease).await;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Affinity bindings for providers without a native upstream session (aliases)
+// ---------------------------------------------------------------------------
+
+/// Qoder stands in for "no native session id": only CodeArts is sticky by
+/// kind, so an affine open is the only thing that can bind it.
+fn affine_key(client: &str) -> SessionKey {
+    SessionKey::new(client, ProviderKind::Qoder, Region::Cn)
+}
+
+#[tokio::test]
+async fn an_affine_open_keeps_the_same_account_and_invents_no_upstream_id() {
+    let fixture = Fixture::memory().await;
+    let alpha = fixture
+        .account_in(ProviderKind::Qoder, Region::Cn, "alpha")
+        .await;
+    let beta = fixture
+        .account_in(ProviderKind::Qoder, Region::Cn, "beta")
+        .await;
+    let router = scheduled_router(&fixture, round_robin());
+
+    let first = router
+        .open_affine(affine_key("task-1"), &[])
+        .await
+        .expect("first open");
+    let owner = first.account_id().to_string();
+    assert!(owner == alpha.id || owner == beta.id);
+    assert_eq!(first.upstream_session_id(), "");
+    router.finish(first).await;
+
+    for _ in 0..3 {
+        let lease = router
+            .open_affine(affine_key("task-1"), &[])
+            .await
+            .expect("repeat open");
+        assert_eq!(lease.account_id(), owner, "the binding must not rotate");
+        assert_eq!(lease.upstream_session_id(), "");
+        router.finish(lease).await;
+    }
+
+    // A different conversation still spreads across the pool.
+    let other = router
+        .open_affine(affine_key("task-2"), &[])
+        .await
+        .expect("other task");
+    router.finish(other).await;
+}

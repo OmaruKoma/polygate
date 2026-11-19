@@ -6296,3 +6296,20 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
   `authorization` / `content-type` / `accept` / `cache-control` 头，`*` 表示任意源。
   空列表保持原行为，管理台路由不受影响。
 - 验证：4 个新测试（配置源预检、未列源无头、空配置无头、`*` 回显任意源）全绿。
+
+## §102 会话亲和：一个任务只认一个目标（2026-11-19）
+
+用户反馈：别名每次请求可能换 Provider，中途换模型更会整段重建，prompt cache 全废、
+输出质量漂移。原实现只有两半：别名排序按 session 做 rendezvous 哈希（不再轮询），
+但 (a) 自动会话 id 里混进了模型名，(b) 账号粘性只对 CodeArts 生效。
+
+- 会话 id（`src/api/mod.rs::session_id_for`）：去掉模型名，来源顺序为
+  `X-Session-Id` / `X-Polygate-Session-Id` / `session_id` → OpenAI `user` /
+  Responses `user` / Anthropic `metadata.user_id` → 首条 user 文本的 sha256。
+  首条消息在多轮中不变，所以默认路径也是稳定的。
+- 别名亲和（`SessionRouter::open_affine`）：`dispatch` 对 `resolved.is_alias`
+  走亲和绑定，把（会话 → 账号）也钉住；这类绑定**不合成 upstream session id**
+  （只有 CodeArts 有真正的会话 id，其它 Provider 不该收到伪造的 chat_id）。
+  失败重试仍通过 `open_excluding` 走 CAS rebind，不会把上游会话带到新账号。
+- 验证：876 tests 全绿（新增 3 个：换模型不换会话 id、`user` 决定会话 id、
+  亲和绑定不轮换账号且不伪造 upstream id）；clippy/fmt 干净。

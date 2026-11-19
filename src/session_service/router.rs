@@ -98,6 +98,18 @@ impl SessionRouter {
         self.open_excluding(key, &[]).await
     }
 
+    /// Same as [`open`], but always keeps a binding even for kinds without a
+    /// native upstream session. Aliases use it so one conversation stays on one
+    /// provider *and* one account: switching either one wastes the upstream
+    /// prompt cache and changes the answer quality mid-task.
+    pub async fn open_affine(
+        &self,
+        key: SessionKey,
+        excluded: &[String],
+    ) -> Result<RouteLease, GatewayError> {
+        self.open_binding(key, excluded, false).await
+    }
+
     /// Same as [`open`], but never uses one of the `excluded` accounts. Used to
     /// fail over before any output was produced; the existing binding is moved
     /// with a CAS rebind and its upstream session id is dropped (never carried
@@ -111,7 +123,17 @@ impl SessionRouter {
         if !self.is_sticky(key.kind) {
             return self.open_stateless(key, excluded).await;
         }
+        self.open_binding(key, excluded, true).await
+    }
 
+    /// `attach_upstream = false` for kinds whose upstream has no session id:
+    /// the account stays bound, but no synthetic id is written or forwarded.
+    async fn open_binding(
+        &self,
+        key: SessionKey,
+        excluded: &[String],
+        attach_upstream: bool,
+    ) -> Result<RouteLease, GatewayError> {
         let mut binding = self.sessions.get(&key).await?;
         if binding
             .as_ref()
@@ -136,10 +158,13 @@ impl SessionRouter {
             Some(session) => session.upstream_session_id,
             None => {
                 let account = self.select_account(&key, excluded).await?;
-                let generated = new_upstream_id();
+                // Affinity-only bindings (aliases, no native upstream session)
+                // must not invent an id: it would be forwarded as a chat id the
+                // upstream never issued.
+                let generated = attach_upstream.then(new_upstream_id);
                 let outcome = self
                     .sessions
-                    .bind_if_absent(&key, &account.id, Some(&generated))
+                    .bind_if_absent(&key, &account.id, generated.as_deref())
                     .await?;
                 if excluded.contains(&outcome.session.account_id) {
                     let account = self.select_account(&key, excluded).await?;
@@ -155,7 +180,7 @@ impl SessionRouter {
         };
 
         let lease = self.sessions.acquire(&key).await?;
-        if upstream.as_deref().map(str::is_empty).unwrap_or(true) {
+        if attach_upstream && upstream.as_deref().map(str::is_empty).unwrap_or(true) {
             let generated = upstream.unwrap_or_else(new_upstream_id);
             self.sessions
                 .attach_upstream(
