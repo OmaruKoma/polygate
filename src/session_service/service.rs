@@ -248,7 +248,8 @@ impl SessionBindingService {
             _ => LimitPolicy {
                 max_starts: 0,
                 window: Duration::ZERO,
-                max_in_flight: self.policy.max_in_flight.max(1),
+                // Honour the operator-configured per-account concurrency.
+                max_in_flight: usize::MAX,
                 ..self.policy
             },
         }

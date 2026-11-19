@@ -6264,3 +6264,21 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 响应体（连接可回池）、Provider 统一 `connect_timeout(10s)` + `pool_idle_timeout(10s)`
 + TCP keepalive；OpenClash 自定义规则新增 `DOMAIN-SUFFIX,teleai.com.cn,DIRECT`，
 并关闭 `router_self_proxy`（路由器自身流量不再过代理，PolyGate 的上游全是 CN）。
+
+## §100 并发上限与上下文窗口（2026-11-19）
+
+- 并发：非 CodeArts Provider 的策略此前仍沿用 `LimitPolicy` 默认的
+  `max_in_flight`，6 个并发 TeleAgent 请求实测 24.8 s 墙钟、TTFT 梯度
+  0.6/6.1/10.2/13.1/18.0/21.5 s。改为 `policy_for` 对非 CodeArts 返回
+  `max_in_flight = usize::MAX` 后，容量等于账号的 `max_concurrency`
+  （本机账号均为 4），由账号级并发控制决定并行度。
+  注意上游自身限制：`userCenter` 报 `max_concurrent_tasks: 3`，超过后上游排队，
+  所以单账号并行收益有天花板；更高的总吞吐来自多账号 / 多 Provider。
+- 上下文：上游 `/model-options` 三个模型 `context_limit` 恒为 `null`；
+  桌面端 `preset-context.json` 的 `contextLength: 1000000` 是**客户端设置**，
+  客户端自带 `model-catalog.json` 仍写 chat-pro/chat-flagship 400k / 64k。
+  新增 provider 选项 `model.context` / `model.max_output`
+  （`src/providers/teleagent/models.rs::Limits`），只对上游报 `null` 的模型生效，
+  上游若给出真实值则不覆盖。路由器配置设 `"model.context" = "1000000"`。
+- 验证：`cargo test` 866+ 全绿、clippy 无警告；部署后 `/v1/models` 三个 TeleAgent
+  模型均报 1,000,000。
