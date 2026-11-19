@@ -238,6 +238,22 @@ impl SessionBindingService {
         self.policy
     }
 
+    /// The 3-starts-per-60 s window is a CodeArts fact (upstream sessions
+    /// linger); applying it to every provider queued the fourth request for
+    /// ~50 s. Other providers keep the operator's concurrency, the same queue
+    /// timeout and same-session serialization, but no start window.
+    fn policy_for(&self, kind: ProviderKind) -> LimitPolicy {
+        match kind {
+            ProviderKind::Codearts => self.policy,
+            _ => LimitPolicy {
+                max_starts: 0,
+                window: Duration::ZERO,
+                max_in_flight: self.policy.max_in_flight.max(1),
+                ..self.policy
+            },
+        }
+    }
+
     /// Create a binding if none exists for the key. An existing binding is
     /// returned unchanged even if it is bound to another account: stickiness
     /// wins over the caller's suggestion, and moving it requires an explicit
@@ -351,8 +367,9 @@ impl SessionBindingService {
             return Err(error);
         }
 
-        let deadline = tokio::time::Instant::now() + self.policy.queue_timeout;
-        let session_guard = if self.policy.serialize_session {
+        let policy = self.policy_for(key.kind);
+        let deadline = tokio::time::Instant::now() + policy.queue_timeout;
+        let session_guard = if policy.serialize_session {
             Some(self.gate.acquire(&key.gate_key(), deadline).await?)
         } else {
             None
@@ -360,7 +377,7 @@ impl SessionBindingService {
         let operator_limit = usize::try_from(account.max_concurrency).unwrap_or(1);
         let account_lease = self
             .limiter
-            .acquire(&account.id, operator_limit, deadline)
+            .acquire(&account.id, operator_limit, deadline, policy)
             .await?;
 
         Ok(SessionLease {
@@ -401,8 +418,9 @@ impl SessionBindingService {
             return Err(error);
         }
 
-        let deadline = tokio::time::Instant::now() + self.policy.queue_timeout;
-        let session_guard = if self.policy.serialize_session {
+        let policy = self.policy_for(key.kind);
+        let deadline = tokio::time::Instant::now() + policy.queue_timeout;
+        let session_guard = if policy.serialize_session {
             Some(self.gate.acquire(&key.gate_key(), deadline).await?)
         } else {
             None
@@ -410,7 +428,7 @@ impl SessionBindingService {
         let operator_limit = usize::try_from(account.max_concurrency).unwrap_or(1);
         let account_lease = self
             .limiter
-            .acquire(&account.id, operator_limit, deadline)
+            .acquire(&account.id, operator_limit, deadline, policy)
             .await?;
 
         Ok(AccountSlot {

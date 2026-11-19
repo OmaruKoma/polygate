@@ -291,6 +291,22 @@ impl Gateway {
     }
 }
 
+/// HTTP client shared by provider adapters.
+///
+/// Upstreams close idle keep-alive connections without notice; reusing one of
+/// those makes the next request wait for TCP retransmission (measured: ~55 s on
+/// a reused connection while a fresh dial took 1 ms). Idle connections are
+/// therefore recycled well before a typical 60 s server keep-alive, and TCP
+/// keepalive surfaces a dead peer instead of hanging.
+fn provider_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .pool_idle_timeout(std::time::Duration::from_secs(10))
+        .tcp_keepalive(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default()
+}
+
 fn build_registry(
     config: &Config,
     accounts: &AccountService,
@@ -331,7 +347,7 @@ fn build_registry(
                     provider.provider_id(),
                     provider.region,
                     provider.verification(),
-                    reqwest::Client::new(),
+                    provider_http_client(),
                 )
                 .with_identity(identity(provider)?);
                 registry.register(Arc::new(qoder))?;
@@ -344,7 +360,7 @@ fn build_registry(
                         "provider loomy has no international deployment; use region = \"cn\"",
                     ));
                 }
-                let client = reqwest::Client::new();
+                let client = provider_http_client();
                 let loomy = match provider.base_url.as_deref() {
                     Some(base) => LoomyProvider::with_base(
                         provider.provider_id(),
@@ -378,7 +394,7 @@ fn build_registry(
                     provider.provider_id(),
                     provider.region,
                     provider.verification(),
-                    reqwest::Client::new(),
+                    provider_http_client(),
                     cloud,
                     sts,
                 )
@@ -394,7 +410,7 @@ fn build_registry(
                         "provider doubao has only one deployment; use region = \"cn\"",
                     ));
                 }
-                let client = reqwest::Client::new();
+                let client = provider_http_client();
                 let doubao = match provider.base_url.as_deref() {
                     Some(base) => DoubaoProvider::with_base(
                         provider.provider_id(),
@@ -419,7 +435,14 @@ fn build_registry(
                         "provider teleagent has only one deployment; use region = \"cn\"",
                     ));
                 }
-                let client = reqwest::Client::new();
+                // SSE through the reference script and the desktop client is h1;
+                // pinning it keeps stream relay predictable across proxies.
+                let client = reqwest::Client::builder()
+                    .http1_only()
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .tcp_keepalive(std::time::Duration::from_secs(15))
+                    .build()
+                    .unwrap_or_default();
                 let teleagent = match provider.base_url.as_deref() {
                     Some(base) => TeleagentProvider::with_base(
                         provider.provider_id(),
@@ -438,7 +461,7 @@ fn build_registry(
                 registry.register(Arc::new(teleagent))?;
             }
             ProviderKind::Workbuddy => {
-                let client = reqwest::Client::new();
+                let client = provider_http_client();
                 let workbuddy = match provider.base_url.as_deref() {
                     Some(base) => WorkbuddyProvider::with_base(
                         provider.provider_id(),
@@ -461,7 +484,7 @@ fn build_registry(
                 registry.register(Arc::new(workbuddy))?;
             }
             ProviderKind::Trae => {
-                let client = reqwest::Client::new();
+                let client = provider_http_client();
                 let trae = match provider.base_url.as_deref() {
                     Some(base) => TraeProvider::with_base(
                         provider.provider_id(),
@@ -527,7 +550,7 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                         cloud,
                         sts,
                         claim_enabled,
-                        reqwest::Client::new(),
+                        provider_http_client(),
                     )),
                 );
             }
@@ -544,7 +567,7 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                 let mut executor = QoderCheckinExecutor::new(
                     provider.region,
                     claim_enabled,
-                    reqwest::Client::new(),
+                    provider_http_client(),
                 )
                 .with_identity(identity(provider)?);
                 if let Some((token, machine_type)) = machine {
@@ -562,7 +585,7 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                     provider.region,
                     Arc::new(crate::checkin::TeleagentCheckinExecutor::new(
                         claim_enabled,
-                        reqwest::Client::new(),
+                        provider_http_client(),
                     )),
                 );
             }
@@ -578,7 +601,7 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                         WorkbuddyCheckinExecutor::new(
                             provider.region,
                             claim_enabled,
-                            reqwest::Client::new(),
+                            provider_http_client(),
                         )
                         .with_identity(identity(provider)?),
                     ),
@@ -597,7 +620,7 @@ fn build_checkin_executor(config: &Config) -> Result<Arc<dyn CheckinExecutor>, G
                             provider.region,
                             claim_enabled,
                             option(provider, "checkin.device_id"),
-                            reqwest::Client::new(),
+                            provider_http_client(),
                         )
                         .with_identity(identity(provider)?),
                     ),

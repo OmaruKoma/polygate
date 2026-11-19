@@ -110,7 +110,7 @@ impl TeleagentProvider {
             .map_err(|_| GatewayError::internal("TeleAgent body serialization failed"))?;
         let response = self.http.open_stream(&credential, &body).await?;
         let state = StreamState {
-            body: response,
+            body: Some(response),
             decoder: SseDecoder::new(),
             translator: StreamTranslator::new(request.model.clone()),
             frames: VecDeque::new(),
@@ -206,7 +206,7 @@ impl Provider for TeleagentProvider {
 }
 
 struct StreamState {
-    body: reqwest::Response,
+    body: Option<reqwest::Response>,
     decoder: SseDecoder,
     translator: StreamTranslator,
     frames: VecDeque<String>,
@@ -217,6 +217,19 @@ struct StreamState {
 }
 
 impl StreamState {
+    /// Consume whatever is left of the response in the background so hyper can
+    /// return the connection to the pool. A dropped, half-read SSE body closes
+    /// the TCP connection instead, which forces the next call onto a fresh
+    /// connection and — measured — onto one of the upstream's slower replicas.
+    fn drain(&mut self) {
+        let Some(body) = self.body.take() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), body.bytes()).await;
+        });
+    }
+
     async fn next(&mut self) -> Option<StreamItem> {
         if let Some(item) = self.queue.pop_front() {
             return Some(item);
@@ -229,6 +242,7 @@ impl StreamState {
                 match parse_frame(&frame) {
                     Ok(Frame::Done) => {
                         self.done = true;
+                        self.drain();
                         return self.translator.finish().map(Ok);
                     }
                     Ok(Frame::Data(value)) => {
@@ -247,10 +261,15 @@ impl StreamState {
             }
             if self.eof {
                 self.done = true;
+                self.drain();
                 // The upstream closed without `[DONE]`; report what we saw.
                 return self.translator.finish().map(Ok);
             }
-            let chunk = match tokio::time::timeout(self.idle, self.body.chunk()).await {
+            let Some(body) = self.body.as_mut() else {
+                self.done = true;
+                return self.translator.finish().map(Ok);
+            };
+            let chunk = match tokio::time::timeout(self.idle, body.chunk()).await {
                 Ok(Ok(Some(chunk))) => chunk,
                 Ok(Ok(None)) => {
                     self.eof = true;

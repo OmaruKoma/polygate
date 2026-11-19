@@ -6236,3 +6236,31 @@ GET  /admin/api/accounts?kind=suanlidou&region=cn → 1 条，auth_status valid
 - 建议（未自动执行，属于路由器全局配置）：在 `/etc/openclash/config.yaml` 的 rules 顶部加
   `- DOMAIN-SUFFIX,teleai.com.cn,DIRECT`（以及需要的 CN Provider 域名），让 PolyGate 的
   CN 上游绕开代理组；或在网关侧给 reqwest 加 `connect_timeout`，让卡住的拨号快速失败。
+
+### 99.3 真正的原因：CodeArts 的限流策略被套到了所有 Provider（2026-11-19）
+
+§99.2 把慢归因给路由器 OpenClash，**结论是错的**，本节更正。
+
+- 现象：经网关调 TeleAgent / Qoder，每第 3 个请求会卡 20–55 s；同一账号从本机直连上游
+  12/12 快（TTFT 0.4–3 s）；网关进程本身空闲（慢请求期间 `/health` 1–8 ms）。
+- 定位（逐层打点）：
+  - 慢请求的耗时发生在 `SessionRouter::open_excluding` 内部（`dispatch start` →
+    `dispatch route acquired` 间隔 50.7 s），上游 HTTP 尚未发出；
+  - 排除项：HTTP/2（改 h1 无效）、DNS（钉 IP 无效）、连接池复用（禁用复用无效）、
+    路由器出站（curl 从路由器签同样的请求 6/6 快；reqwest 独立探针在路由器上 12/12 快）、
+    上游限速（PC 直连同账号 12/12 快）。
+- 根因：运行时给 `SessionService` 传的是 `LimitPolicy::codearts()`
+  （`max_starts = 3` / `window = 60 s`，源自 CodeArts 三个上游会话的实测），
+  这个"每分钟最多 3 次启动"的窗口被**所有 Provider 共用**。第 4 个请求排队到窗口
+  释放，正好 20–55 s。`/v1/models` 不走账号限流，所以一直很快。
+- 修复：`SessionService::policy_for(kind)`：只有 CodeArts 保留 start window 与
+  session 序列化；其它 Provider 只保留操作者配置的 `accounts.max_concurrency`、
+  相同的排队超时与会话序列化，不再有启动窗口（`src/session_service/service.rs`）。
+  `AccountLimiter::acquire` 改为按账号传策略。
+- 验证：部署后 TeleAgent 连续 15 次 TTFT 0.39–1.6 s（此前 1/3 是 50 s），
+  Qoder 连续 8 次 0.66–1.6 s（此前 14 s 尖峰、单次 131 s）。866 tests 全绿。
+
+附带保留的改动（与本问题无关但无害）：TeleAgent 客户端钉 HTTP/1.1、流结束后后台排空
+响应体（连接可回池）、Provider 统一 `connect_timeout(10s)` + `pool_idle_timeout(10s)`
++ TCP keepalive；OpenClash 自定义规则新增 `DOMAIN-SUFFIX,teleai.com.cn,DIRECT`，
+并关闭 `router_self_proxy`（路由器自身流量不再过代理，PolyGate 的上游全是 CN）。

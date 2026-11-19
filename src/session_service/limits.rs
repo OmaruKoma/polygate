@@ -120,8 +120,9 @@ impl AccountLimiter {
         account_id: &str,
         operator_limit: usize,
         deadline: Instant,
+        policy: LimitPolicy,
     ) -> Result<AccountLease, GatewayError> {
-        let state = self.state(account_id, operator_limit);
+        let state = self.state(account_id, operator_limit, policy);
         let permit = match timeout_at(deadline, state.semaphore.clone().acquire_owned()).await {
             Ok(Ok(permit)) => permit,
             Ok(Err(_)) => {
@@ -130,7 +131,7 @@ impl AccountLimiter {
             Err(_) => return Err(busy(account_id, "in-flight")),
         };
 
-        if self.policy.max_starts > 0 {
+        if policy.max_starts > 0 {
             let mut starts = state.starts.lock().await;
             loop {
                 let now = Instant::now();
@@ -140,7 +141,7 @@ impl AccountLimiter {
                 {
                     starts.pop_front();
                 }
-                if starts.len() < self.policy.max_starts {
+                if starts.len() < policy.max_starts {
                     starts.push_back(now);
                     break;
                 }
@@ -148,7 +149,7 @@ impl AccountLimiter {
                     .front()
                     .copied()
                     .expect("a full window has a first start")
-                    + self.policy.window;
+                    + policy.window;
                 if next_slot >= deadline {
                     return Err(busy(account_id, "session window"));
                 }
@@ -159,11 +160,16 @@ impl AccountLimiter {
         Ok(AccountLease { _permit: permit })
     }
 
-    fn state(&self, account_id: &str, operator_limit: usize) -> Arc<AccountState> {
+    fn state(
+        &self,
+        account_id: &str,
+        operator_limit: usize,
+        policy: LimitPolicy,
+    ) -> Arc<AccountState> {
         // The CodeArts cap is an upper bound; an operator may configure a
         // smaller `accounts.max_concurrency`. The capacity is fixed at first
         // use, so a runtime change needs a restart or a future DB lease.
-        let capacity = self.policy.max_in_flight.min(operator_limit.max(1));
+        let capacity = policy.max_in_flight.min(operator_limit.max(1));
         let mut states = self.states.lock();
         states
             .entry(account_id.to_string())
