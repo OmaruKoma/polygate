@@ -1347,6 +1347,20 @@ async fn an_affine_open_keeps_the_same_account_and_invents_no_upstream_id() {
     assert_eq!(first.upstream_session_id(), "");
     router.finish(first).await;
 
+    // The pin must not touch the database: aliases fire on every turn.
+    for account in [&alpha, &beta] {
+        let rows = fixture
+            .storage
+            .sessions()
+            .list_by_account(&account.id)
+            .await
+            .expect("session rows");
+        assert!(
+            rows.is_empty(),
+            "an affinity pin must not persist a session binding"
+        );
+    }
+
     for _ in 0..3 {
         let lease = router
             .open_affine(affine_key("task-1"), &[])

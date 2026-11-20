@@ -20,6 +20,7 @@
 //!    upstream session is already gone, so there is nothing to carry over and
 //!    a one-shot client must not inherit a permanent error.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::account_service::AccountService;
@@ -43,12 +44,25 @@ fn default_sticky_kinds() -> Vec<ProviderKind> {
     vec![ProviderKind::Codearts]
 }
 
+/// In-memory affinity binding: the account a conversation is pinned to.
+///
+/// These are deliberately **not** persisted. Writing a row per request turned
+/// 20 concurrent alias calls into 20 inserts plus 20 updates on the router's
+/// flash (measured 18–56 s wall); the only thing worth remembering is which
+/// account served the last turn, and the upstream prompt cache that makes that
+/// worthwhile is short-lived anyway.
+struct AffinityEntry {
+    account_id: String,
+    expires_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Clone)]
 pub struct SessionRouter {
     sessions: SessionBindingService,
     accounts: AccountService,
     scheduler: Arc<Scheduler>,
     sticky_kinds: Vec<ProviderKind>,
+    affinity: Arc<Mutex<HashMap<String, AffinityEntry>>>,
 }
 
 impl SessionRouter {
@@ -69,6 +83,7 @@ impl SessionRouter {
             accounts,
             scheduler,
             sticky_kinds: default_sticky_kinds(),
+            affinity: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -98,16 +113,81 @@ impl SessionRouter {
         self.open_excluding(key, &[]).await
     }
 
-    /// Same as [`open`], but always keeps a binding even for kinds without a
-    /// native upstream session. Aliases use it so one conversation stays on one
+    /// Same as [`open`], but pins the account for kinds without a native
+    /// upstream session. Aliases use it so one conversation stays on one
     /// provider *and* one account: switching either one wastes the upstream
     /// prompt cache and changes the answer quality mid-task.
+    ///
+    /// The pin lives in memory for `scheduler.session_ttl_secs`; it is never
+    /// written to the database, so repeated turns cost no storage round trip.
     pub async fn open_affine(
         &self,
         key: SessionKey,
         excluded: &[String],
     ) -> Result<RouteLease, GatewayError> {
-        self.open_binding(key, excluded, false).await
+        key_validate(&key)?;
+        let map_key = format!(
+            "{}:{}:{}",
+            key.kind.as_str(),
+            key.region.as_str(),
+            key.client_session_id
+        );
+        let now = chrono::Utc::now();
+        let ttl = chrono::Duration::seconds(
+            i64::try_from(self.scheduler.config().session_ttl_secs).unwrap_or(86_400),
+        );
+
+        let pinned = {
+            let mut map = self.affinity.lock().expect("affinity map");
+            map.retain(|_, entry| entry.expires_at > now);
+            map.get(&map_key)
+                .filter(|entry| !excluded.contains(&entry.account_id))
+                .map(|entry| entry.account_id.clone())
+        };
+
+        let account_id = match pinned {
+            Some(account_id) => account_id,
+            None => {
+                let account = self.select_account(&key, excluded).await?;
+                let account_id = account.id.clone();
+                self.affinity.lock().expect("affinity map").insert(
+                    map_key,
+                    AffinityEntry {
+                        account_id: account_id.clone(),
+                        expires_at: now + ttl,
+                    },
+                );
+                account_id
+            }
+        };
+
+        let account = self.accounts.get(&account_id).await?.ok_or_else(|| {
+            GatewayError::new(
+                ErrorKind::NoCapacity,
+                format!("the pinned account {account_id} no longer exists"),
+            )
+        })?;
+        let slot = self.sessions.acquire_slot(&key, &account).await?;
+        let authorization = self
+            .accounts
+            .authorization_context_for(&account_id, key.kind, key.region)
+            .await?;
+        let credential = authorization.credential.ok_or_else(|| {
+            GatewayError::new(
+                ErrorKind::AuthInvalid,
+                format!("account {account_id} has no stored credential"),
+            )
+        })?;
+        self.scheduler.acquired(&account_id);
+        Ok(RouteLease {
+            key,
+            held: HeldLease::Slot(slot),
+            account_id,
+            credential,
+            credential_revision: authorization.credential_revision,
+            upstream_session_id: String::new(),
+            failure: Mutex::new(None),
+        })
     }
 
     /// Same as [`open`], but never uses one of the `excluded` accounts. Used to
@@ -123,17 +203,7 @@ impl SessionRouter {
         if !self.is_sticky(key.kind) {
             return self.open_stateless(key, excluded).await;
         }
-        self.open_binding(key, excluded, true).await
-    }
 
-    /// `attach_upstream = false` for kinds whose upstream has no session id:
-    /// the account stays bound, but no synthetic id is written or forwarded.
-    async fn open_binding(
-        &self,
-        key: SessionKey,
-        excluded: &[String],
-        attach_upstream: bool,
-    ) -> Result<RouteLease, GatewayError> {
         let mut binding = self.sessions.get(&key).await?;
         if binding
             .as_ref()
@@ -158,13 +228,10 @@ impl SessionRouter {
             Some(session) => session.upstream_session_id,
             None => {
                 let account = self.select_account(&key, excluded).await?;
-                // Affinity-only bindings (aliases, no native upstream session)
-                // must not invent an id: it would be forwarded as a chat id the
-                // upstream never issued.
-                let generated = attach_upstream.then(new_upstream_id);
+                let generated = new_upstream_id();
                 let outcome = self
                     .sessions
-                    .bind_if_absent(&key, &account.id, generated.as_deref())
+                    .bind_if_absent(&key, &account.id, Some(&generated))
                     .await?;
                 if excluded.contains(&outcome.session.account_id) {
                     let account = self.select_account(&key, excluded).await?;
@@ -180,7 +247,7 @@ impl SessionRouter {
         };
 
         let lease = self.sessions.acquire(&key).await?;
-        if attach_upstream && upstream.as_deref().map(str::is_empty).unwrap_or(true) {
+        if upstream.as_deref().map(str::is_empty).unwrap_or(true) {
             let generated = upstream.unwrap_or_else(new_upstream_id);
             self.sessions
                 .attach_upstream(
